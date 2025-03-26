@@ -106,9 +106,19 @@ class StreamRecorder:
             finally:
                 self.current_process = None
 
-    def add_streamer(self, streamer):
+    def add_streamer(self):
         """Add a new streamer to monitor"""
-        streamer = streamer.strip().lower()
+        # Display current streamers
+        print("\nCurrent Monitored Streamers:")
+        for streamer in self.streamers:
+            print(streamer)
+        
+        # Prompt for new streamer
+        streamer = input("\nEnter Twitch username to add (or 'q' to cancel): ").strip().lower()
+        
+        if streamer == 'q':
+            return
+
         if streamer and streamer not in self.streamers:
             self.streamers.append(streamer)
             self.save_streamers()
@@ -118,15 +128,35 @@ class StreamRecorder:
         
         input("Press Enter to continue...")
 
-    def remove_streamer(self, streamer):
+    def remove_streamer(self):
         """Remove a streamer from monitoring"""
-        streamer = streamer.strip().lower()
-        if streamer in self.streamers:
-            self.streamers.remove(streamer)
-            self.save_streamers()
-            print(f"Removed {streamer} from monitored streamers.")
-        else:
-            print("Streamer not found in the list.")
+        if not self.streamers:
+            print("No streamers to remove.")
+            input("Press Enter to continue...")
+            return
+
+        # Display streamers with numbers
+        print("\nCurrently Monitored Streamers:")
+        for i, streamer in enumerate(self.streamers, 1):
+            print(f"{i}. {streamer}")
+
+        # Prompt user to choose a streamer to remove
+        try:
+            choice = input("\nEnter the number of the streamer to remove (or 'q' to quit): ")
+            
+            if choice.lower() == 'q':
+                return
+
+            # Validate choice
+            index = int(choice) - 1
+            if 0 <= index < len(self.streamers):
+                removed_streamer = self.streamers.pop(index)
+                self.save_streamers()
+                print(f"Removed {removed_streamer} from monitored streamers.")
+            else:
+                print("Invalid selection.")
+        except ValueError:
+            print("Invalid input. Please enter a number or 'q'.")
         
         input("Press Enter to continue...")
 
@@ -188,11 +218,9 @@ class StreamRecorder:
             self.clear_screen()
             
             if choice == '1':
-                streamer = input("Enter Twitch username to add: ")
-                self.add_streamer(streamer)
+                self.add_streamer()
             elif choice == '2':
-                streamer = input("Enter Twitch username to remove: ")
-                self.remove_streamer(streamer)
+                self.remove_streamer()
             elif choice == '3':
                 print("\nCurrently Monitored Streamers:")
                 for streamer in self.streamers:
