@@ -35,14 +35,19 @@ streamlink --version
 
 ## Usage
 
-1. Run the script:
+1. Navigate to the project directory:
 ```
-python twitch_recorder.py
+cd twitch-vod-downloader
 ```
 
-2. When prompted, enter the Twitch username of the streamer you want to monitor.
+2. Run the script:
+```
+python -m src.twitch_recorder
+```
 
-3. The script will check every 5 minutes if the streamer is live. When they go live, it will automatically start recording.
+3. When prompted, enter the Twitch username of the streamer you want to monitor.
+
+4. Recordings will be saved in the `recordings/` directory.
 
 ## Configuration
 
@@ -54,3 +59,8 @@ You can modify the following parameters in the script:
 ## License
 
 This project is licensed under the GNU General Public License v3.0 - see the LICENSE file for details.
+
+## Recordings
+
+Recorded streams are saved in the `recordings/` directory with filenames in the format:
+`streamer_name_YYYYMMDD_HHMMSS.ts`
