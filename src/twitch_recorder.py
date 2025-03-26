@@ -1,4 +1,4 @@
-import time
+iimport time
 import subprocess
 import json
 from datetime import datetime
@@ -6,12 +6,15 @@ import os
 import sys
 import signal
 import platform
+import threading
 
 class StreamRecorder:
     def __init__(self, config_file='streamers.json'):
         self.config_file = config_file
         self.streamers = self.load_streamers()
         self.current_process = None
+        self.monitoring_thread = None
+        self.stop_monitoring_event = threading.Event()
 
     def clear_screen(self):
         """Clear the terminal screen across different platforms"""
@@ -160,6 +163,38 @@ class StreamRecorder:
         
         input("Press Enter to continue...")
 
+    def periodic_live_check(self, check_interval):
+        """Periodically check for live streamers"""
+        while not self.stop_monitoring_event.is_set():
+            print(f"\nChecking for live streamers (interval: {check_interval} minutes)...")
+            live_streamers = self.find_live_streamers()
+
+            if live_streamers:
+                print("\nLive Streamers Found:")
+                for i, streamer in enumerate(live_streamers, 1):
+                    print(f"{i}. {streamer}")
+                
+                try:
+                    choice = input("Enter the number of the streamer to record (or 'q' to stop checking): ")
+                    
+                    if choice.lower() == 'q':
+                        break
+
+                    # Validate choice
+                    index = int(choice) - 1
+                    if 0 <= index < len(live_streamers):
+                        selected_streamer = live_streamers[index]
+                        # Stop periodic checking before recording
+                        self.stop_monitoring_event.set()
+                        self.record_stream(selected_streamer)
+                        break
+                except ValueError:
+                    print("Invalid input. Please enter a number or 'q'.")
+            
+            # Wait for the specified interval
+            wait_time = check_interval * 60  # convert minutes to seconds
+            self.stop_monitoring_event.wait(wait_time)
+
     def start_monitoring(self):
         """Start monitoring and allow user to choose a live streamer to record"""
         if not self.streamers:
@@ -171,33 +206,43 @@ class StreamRecorder:
         live_streamers = self.find_live_streamers()
 
         if not live_streamers:
-            print("No streamers are currently live.")
-            input("Press Enter to continue...")
-            return
-
-        # Display live streamers
-        print("\nCurrently Live Streamers:")
-        for i, streamer in enumerate(live_streamers, 1):
-            print(f"{i}. {streamer}")
-
-        # Prompt user to choose a streamer
-        try:
-            choice = input("Enter the number of the streamer to record (or 'q' to quit): ")
+            print("\nThere aren't any live channels in your list.")
+            periodic_check = input("Do you want to periodically check for streamers to go live? (y/n): ").lower()
             
-            if choice.lower() == 'q':
+            if periodic_check != 'y':
                 return
 
-            # Validate choice
-            index = int(choice) - 1
-            if 0 <= index < len(live_streamers):
-                selected_streamer = live_streamers[index]
-                self.record_stream(selected_streamer)
-            else:
-                print("Invalid selection.")
-                input("Press Enter to continue...")
-        except ValueError:
-            print("Invalid input. Please enter a number or 'q'.")
-            input("Press Enter to continue...")
+            # Prompt for check interval
+            while True:
+                try:
+                    check_interval = float(input("How frequently do you want to check for live streams (in minutes)? "))
+                    if check_interval <= 0:
+                        print("Please enter a positive number.")
+                        continue
+                    break
+                except ValueError:
+                    print("Please enter a valid number.")
+
+            # Reset the stop event
+            self.stop_monitoring_event.clear()
+
+            # Start periodic checking in a separate thread
+            self.monitoring_thread = threading.Thread(
+                target=self.periodic_live_check, 
+                args=(check_interval,)
+            )
+            self.monitoring_thread.start()
+
+            print(f"\nPeriodically checking for live streamers every {check_interval} minutes.")
+            print("Press Enter to stop checking...")
+            input()
+
+            # Stop the monitoring
+            self.stop_monitoring_event.set()
+            if self.monitoring_thread:
+                self.monitoring_thread.join()
+
+            return
 
     def menu(self):
         """Main menu for stream recorder"""
