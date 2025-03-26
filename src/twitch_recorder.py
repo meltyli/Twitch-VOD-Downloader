@@ -1,4 +1,4 @@
-iimport time
+import time
 import subprocess
 import json
 from datetime import datetime
