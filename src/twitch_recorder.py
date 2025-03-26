@@ -78,7 +78,9 @@ class StreamRecorder:
             
             # Use subprocess to start recording
             command = f"streamlink https://twitch.tv/{channel_name} best -o {output_file}"
-            process = subprocess.Popen(command, shell=True)
+            
+            # Use Popen with a process group to allow easier termination
+            process = subprocess.Popen(command, shell=True, preexec_fn=os.setsid)
             
             # Store the process
             with self.recording_lock:
@@ -99,6 +101,18 @@ class StreamRecorder:
                     with self.recording_lock:
                         if streamer not in self.recording_processes:
                             self.record_stream(streamer)
+                else:
+                    # If was recording, stop recording
+                    with self.recording_lock:
+                        if streamer in self.recording_processes:
+                            try:
+                                process = self.recording_processes[streamer]
+                                # Use os.killpg to kill entire process group
+                                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                                del self.recording_processes[streamer]
+                                print(f"{streamer}'s stream has ended.")
+                            except Exception as e:
+                                print(f"Error stopping {streamer}'s recording: {e}")
             except Exception as e:
                 print(f"Error monitoring {streamer}: {e}")
             
@@ -123,34 +137,24 @@ class StreamRecorder:
         self.exit_event.clear()
 
         # Create a thread for each live streamer
-        def sigint_handler(signum, frame):
-            print("\nInterrupt received. Stopping monitoring...")
+        self.monitor_threads = []
+        for streamer in live_streamers:
+            thread = threading.Thread(target=self.monitor_stream, args=(streamer,))
+            thread.daemon = True
+            thread.start()
+            self.monitor_threads.append(thread)
+
+        # Wait for user interrupt
+        try:
+            print("Monitoring started. Press Ctrl+C to stop...")
+            while not self.exit_event.is_set():
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\nStopping monitoring...")
             self.exit_event.set()
 
-        # Register signal handler
-        original_sigint = signal.signal(signal.SIGINT, sigint_handler)
-
-        try:
-            # Create and start threads for live streamers
-            self.monitor_threads = []
-            for streamer in live_streamers:
-                thread = threading.Thread(target=self.monitor_stream, args=(streamer,))
-                thread.daemon = True  # Ensures thread will exit when main program exits
-                thread.start()
-                self.monitor_threads.append(thread)
-
-            # Wait for all threads to complete
-            for thread in self.monitor_threads:
-                thread.join()
-
-        except Exception as e:
-            print(f"Error during monitoring: {e}")
-        finally:
-            # Restore original signal handler
-            signal.signal(signal.SIGINT, original_sigint)
-            
-            # Stop monitoring
-            self.stop_monitoring()
+        # Stop monitoring
+        self.stop_monitoring()
 
     def stop_monitoring(self):
         """Stop all monitoring threads and recording processes"""
@@ -161,17 +165,18 @@ class StreamRecorder:
         with self.recording_lock:
             for streamer, process in list(self.recording_processes.items()):
                 try:
-                    process.terminate()
-                    process.wait(timeout=5)  # Wait for process to end
+                    # Use os.killpg to kill entire process group
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
                     del self.recording_processes[streamer]
-                except subprocess.TimeoutExpired:
-                    print(f"Force terminating {streamer}'s recording")
-                    process.kill()
+                    print(f"Stopped recording for {streamer}")
                 except Exception as e:
                     print(f"Error terminating {streamer}'s recording: {e}")
 
+        # Wait for all monitor threads to finish
+        for thread in self.monitor_threads:
+            thread.join(timeout=5)
+
         print("Monitoring stopped.")
-        input("Press Enter to continue...")
 
     def add_streamer(self, streamer):
         """Add a new streamer to monitor"""
@@ -193,7 +198,8 @@ class StreamRecorder:
             with self.recording_lock:
                 if streamer in self.recording_processes:
                     try:
-                        self.recording_processes[streamer].terminate()
+                        # Use os.killpg to kill entire process group
+                        os.killpg(os.getpgid(self.recording_processes[streamer].pid), signal.SIGTERM)
                         del self.recording_processes[streamer]
                     except:
                         pass
@@ -251,13 +257,8 @@ class StreamRecorder:
                 input("Press Enter to continue...")
 
 def main():
-    # Ensure clean exit on Ctrl+C at the main level
-    try:
-        recorder = StreamRecorder()
-        recorder.menu()
-    except KeyboardInterrupt:
-        print("\nExiting...")
-        sys.exit(0)
+    recorder = StreamRecorder()
+    recorder.menu()
 
 if __name__ == "__main__":
     main()
