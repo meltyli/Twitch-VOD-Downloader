@@ -99,17 +99,6 @@ class StreamRecorder:
                     with self.recording_lock:
                         if streamer not in self.recording_processes:
                             self.record_stream(streamer)
-                else:
-                    # If was recording, stop recording
-                    with self.recording_lock:
-                        if streamer in self.recording_processes:
-                            try:
-                                process = self.recording_processes[streamer]
-                                process.terminate()
-                                del self.recording_processes[streamer]
-                                print(f"{streamer}'s stream has ended.")
-                            except Exception as e:
-                                print(f"Error stopping {streamer}'s recording: {e}")
             except Exception as e:
                 print(f"Error monitoring {streamer}: {e}")
             
@@ -119,34 +108,49 @@ class StreamRecorder:
 
     def start_monitoring(self):
         """Start monitoring all streamers"""
-        if not self.streamers:
-            print("No streamers to monitor.")
+        # Find live streamers
+        live_streamers = [streamer for streamer in self.streamers if self.is_stream_live(streamer)]
+        
+        if not live_streamers:
+            print("No live streamers found.")
             input("Press Enter to continue...")
             return
 
         print("\n--- Starting Stream Monitoring ---")
-        print(f"Monitoring {len(self.streamers)} streamers")
+        print(f"Monitoring {len(live_streamers)} live streamers: {', '.join(live_streamers)}")
 
         # Reset exit event
         self.exit_event.clear()
 
-        # Create a thread for each streamer using ThreadPoolExecutor
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(self.streamers)) as executor:
-            # Submit monitoring tasks for each streamer
-            futures = {executor.submit(self.monitor_stream, streamer): streamer for streamer in self.streamers}
+        # Create a thread for each live streamer
+        def sigint_handler(signum, frame):
+            print("\nInterrupt received. Stopping monitoring...")
+            self.exit_event.set()
 
-            # Wait for user to stop or for streams to end
-            try:
-                print("Monitoring started. Press Ctrl+C to stop...\n")
-                # Wait indefinitely 
-                while not self.exit_event.is_set():
-                    time.sleep(1)
-            except KeyboardInterrupt:
-                print("\nStopping monitoring...")
-                self.exit_event.set()
+        # Register signal handler
+        original_sigint = signal.signal(signal.SIGINT, sigint_handler)
 
-        # Stop monitoring
-        self.stop_monitoring()
+        try:
+            # Create and start threads for live streamers
+            self.monitor_threads = []
+            for streamer in live_streamers:
+                thread = threading.Thread(target=self.monitor_stream, args=(streamer,))
+                thread.daemon = True  # Ensures thread will exit when main program exits
+                thread.start()
+                self.monitor_threads.append(thread)
+
+            # Wait for all threads to complete
+            for thread in self.monitor_threads:
+                thread.join()
+
+        except Exception as e:
+            print(f"Error during monitoring: {e}")
+        finally:
+            # Restore original signal handler
+            signal.signal(signal.SIGINT, original_sigint)
+            
+            # Stop monitoring
+            self.stop_monitoring()
 
     def stop_monitoring(self):
         """Stop all monitoring threads and recording processes"""
@@ -247,8 +251,13 @@ class StreamRecorder:
                 input("Press Enter to continue...")
 
 def main():
-    recorder = StreamRecorder()
-    recorder.menu()
+    # Ensure clean exit on Ctrl+C at the main level
+    try:
+        recorder = StreamRecorder()
+        recorder.menu()
+    except KeyboardInterrupt:
+        print("\nExiting...")
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()
