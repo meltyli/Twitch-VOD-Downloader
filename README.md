@@ -10,44 +10,73 @@ A Python script that automatically monitors when a Twitch streamer goes live and
 - Handles stream interruptions gracefully
 - Simple command-line interface
 
-## Requirements
+## Prerequisites
 
-- Python 3.6+
-- Streamlink
+- Python 3.6+ 
+- pip
+- venv (included with Python standard library)
 
-## Installation
+## Setup and Installation
 
-1. Clone this repository:
-```
+### 1. Clone the Repository
+
+```bash
 git clone https://github.com/yourusername/twitch-vod-downloader.git
 cd twitch-vod-downloader
 ```
 
-2. Install the required dependencies:
+### 2. Create a Virtual Environment
+
+#### On Windows:
+```bash
+# Create virtual environment
+python -m venv venv
+
+# Activate the virtual environment
+.\venv\Scripts\activate
 ```
+
+#### On macOS and Linux:
+```bash
+# Create virtual environment
+python3 -m venv venv
+
+# Activate the virtual environment
+source venv/bin/activate
+```
+
+### 3. Install Dependencies
+
+With the virtual environment activated, install the required packages:
+
+```bash
 pip install -r requirements.txt
 ```
 
-3. Ensure Streamlink is properly installed:
-```
+### 4. Verify Streamlink Installation
+
+```bash
 streamlink --version
 ```
 
 ## Usage
 
-1. Navigate to the project directory:
-```
-cd twitch-vod-downloader
-```
+1. Ensure your virtual environment is activated
 
 2. Run the script:
-```
+```bash
 python -m src.twitch_recorder
 ```
 
 3. When prompted, enter the Twitch username of the streamer you want to monitor.
 
-4. Recordings will be saved in the `recordings/` directory.
+### Deactivating the Virtual Environment
+
+When you're done, you can deactivate the virtual environment:
+
+```bash
+deactivate
+```
 
 ## Configuration
 
@@ -56,11 +85,17 @@ You can modify the following parameters in the script:
 - Output file format
 - Stream quality (default: best)
 
-## License
-
-This project is licensed under the GNU General Public License v3.0 - see the LICENSE file for details.
-
 ## Recordings
 
 Recorded streams are saved in the `recordings/` directory with filenames in the format:
 `streamer_name_YYYYMMDD_HHMMSS.ts`
+
+## Troubleshooting
+
+- Ensure you have the latest version of Python
+- Make sure Streamlink is correctly installed
+- Check that you have write permissions in the project directory
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 - see the LICENSE file for details.
