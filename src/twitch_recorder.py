@@ -195,123 +195,123 @@ class StreamRecorder:
             wait_time = check_interval * 60  # convert minutes to seconds
             self.stop_monitoring_event.wait(wait_time)
 
-def start_monitoring(self):
-    """Start monitoring streamers with a detailed workflow"""
-    if not self.streamers:
-        print("No streamers added. Please add streamers first.")
-        input("Press Enter to continue...")
-        return
-
-    # First, check for live streamers
-    print("Checking for live streamers...")
-    live_streamers = self.find_live_streamers()
-
-    if live_streamers:
-        # If streamers are live, prompt user to choose which to download
-        print("\nLive Streamers:")
-        for i, streamer in enumerate(live_streamers, 1):
-            print(f"{i}. {streamer}")
-        
-        while True:
-            try:
-                choice = input("\nEnter the number of the streamer to record (or 'q' to quit): ")
-                
-                if choice.lower() == 'q':
-                    return
-
-                index = int(choice) - 1
-                if 0 <= index < len(live_streamers):
-                    selected_streamer = live_streamers[index]
-                    self.record_stream(selected_streamer)
-                    return
-                else:
-                    print("Invalid selection. Please try again.")
-            except ValueError:
-                print("Please enter a valid number.")
-    else:
-        # No live streamers, ask about periodic checking
-        periodic_check = input("No streamers are currently live. Would you like to periodically check? (y/n): ").lower()
-        
-        if periodic_check != 'y':
+    def start_monitoring(self):
+        """Start monitoring streamers with a detailed workflow"""
+        if not self.streamers:
+            print("No streamers added. Please add streamers first.")
+            input("Press Enter to continue...")
             return
 
-        # Prompt for streamer to monitor
-        print("\nCurrently Monitored Streamers:")
-        for i, streamer in enumerate(self.streamers, 1):
-            print(f"{i}. {streamer}")
+        # First, check for live streamers
+        print("Checking for live streamers...")
+        live_streamers = self.find_live_streamers()
 
-        while True:
-            try:
-                streamer_choice = input("\nEnter the number of the streamer to monitor (or 'q' to cancel): ")
-                
-                if streamer_choice.lower() == 'q':
-                    return
-
-                index = int(streamer_choice) - 1
-                if 0 <= index < len(self.streamers):
-                    selected_streamer = self.streamers[index]
-                    break
-                else:
-                    print("Invalid selection. Please try again.")
-            except ValueError:
-                print("Please enter a valid number.")
-
-        # Prompt for check interval with 2-minute default
-        while True:
-            try:
-                interval_input = input("Enter check interval in minutes (press Enter for default 2 minutes): ")
-                
-                if interval_input == "":
-                    check_interval = 2
-                else:
-                    check_interval = float(interval_input)
-                
-                if check_interval <= 0:
-                    print("Please enter a positive number.")
-                    continue
-                break
-            except ValueError:
-                print("Please enter a valid number.")
-
-        # Reset the stop event
-        self.stop_monitoring_event.clear()
-
-        # Start periodic checking thread
-        def continuous_monitoring(selected_streamer, check_interval):
-            while not self.stop_monitoring_event.is_set():
+        if live_streamers:
+            # If streamers are live, prompt user to choose which to download
+            print("\nLive Streamers:")
+            for i, streamer in enumerate(live_streamers, 1):
+                print(f"{i}. {streamer}")
+            
+            while True:
                 try:
-                    print(f"\nChecking if {selected_streamer} is live...")
+                    choice = input("\nEnter the number of the streamer to record (or 'q' to quit): ")
                     
-                    if self.is_stream_live(selected_streamer):
-                        print(f"\n{selected_streamer} is live! Starting recording...")
+                    if choice.lower() == 'q':
+                        return
+
+                    index = int(choice) - 1
+                    if 0 <= index < len(live_streamers):
+                        selected_streamer = live_streamers[index]
                         self.record_stream(selected_streamer)
-                        
-                        # After recording ends, continue monitoring
-                        print(f"Waiting for next stream from {selected_streamer}...")
+                        return
+                    else:
+                        print("Invalid selection. Please try again.")
+                except ValueError:
+                    print("Please enter a valid number.")
+        else:
+            # No live streamers, ask about periodic checking
+            periodic_check = input("No streamers are currently live. Would you like to periodically check? (y/n): ").lower()
+            
+            if periodic_check != 'y':
+                return
+
+            # Prompt for streamer to monitor
+            print("\nCurrently Monitored Streamers:")
+            for i, streamer in enumerate(self.streamers, 1):
+                print(f"{i}. {streamer}")
+
+            while True:
+                try:
+                    streamer_choice = input("\nEnter the number of the streamer to monitor (or 'q' to cancel): ")
                     
-                    # Wait for the specified interval
-                    wait_time = check_interval * 60  # convert minutes to seconds
-                    self.stop_monitoring_event.wait(wait_time)
-                
-                except Exception as e:
-                    print(f"Error during monitoring: {e}")
+                    if streamer_choice.lower() == 'q':
+                        return
+
+                    index = int(streamer_choice) - 1
+                    if 0 <= index < len(self.streamers):
+                        selected_streamer = self.streamers[index]
+                        break
+                    else:
+                        print("Invalid selection. Please try again.")
+                except ValueError:
+                    print("Please enter a valid number.")
+
+            # Prompt for check interval with 2-minute default
+            while True:
+                try:
+                    interval_input = input("Enter check interval in minutes (press Enter for default 2 minutes): ")
+                    
+                    if interval_input == "":
+                        check_interval = 2
+                    else:
+                        check_interval = float(interval_input)
+                    
+                    if check_interval <= 0:
+                        print("Please enter a positive number.")
+                        continue
                     break
+                except ValueError:
+                    print("Please enter a valid number.")
 
-        # Start monitoring thread
-        self.monitoring_thread = threading.Thread(
-            target=continuous_monitoring, 
-            args=(selected_streamer, check_interval)
-        )
-        self.monitoring_thread.start()
+            # Reset the stop event
+            self.stop_monitoring_event.clear()
 
-        print(f"\nMonitoring {selected_streamer} every {check_interval} minutes.")
-        print("Press Enter to stop monitoring...")
-        input()
+            # Start periodic checking thread
+            def continuous_monitoring(selected_streamer, check_interval):
+                while not self.stop_monitoring_event.is_set():
+                    try:
+                        print(f"\nChecking if {selected_streamer} is live...")
+                        
+                        if self.is_stream_live(selected_streamer):
+                            print(f"\n{selected_streamer} is live! Starting recording...")
+                            self.record_stream(selected_streamer)
+                            
+                            # After recording ends, continue monitoring
+                            print(f"Waiting for next stream from {selected_streamer}...")
+                        
+                        # Wait for the specified interval
+                        wait_time = check_interval * 60  # convert minutes to seconds
+                        self.stop_monitoring_event.wait(wait_time)
+                    
+                    except Exception as e:
+                        print(f"Error during monitoring: {e}")
+                        break
 
-        # Stop the monitoring
-        self.stop_monitoring_event.set()
-        if self.monitoring_thread:
-            self.monitoring_thread.join()
+            # Start monitoring thread
+            self.monitoring_thread = threading.Thread(
+                target=continuous_monitoring, 
+                args=(selected_streamer, check_interval)
+            )
+            self.monitoring_thread.start()
+
+            print(f"\nMonitoring {selected_streamer} every {check_interval} minutes.")
+            print("Press Enter to stop monitoring...")
+            input()
+
+            # Stop the monitoring
+            self.stop_monitoring_event.set()
+            if self.monitoring_thread:
+                self.monitoring_thread.join()
 
     def menu(self):
         """Main menu for stream recorder"""
