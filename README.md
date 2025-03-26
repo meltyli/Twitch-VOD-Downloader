@@ -1,13 +1,13 @@
 # Twitch VOD Downloader
 
-A Python script that automatically monitors when a Twitch streamer goes live and downloads their stream for later viewing.
+A Python script that helps you record live Twitch streams for later viewing.
 
 ## Features
 
-- Automatically detects when a streamer goes live
+- Manually select and record live Twitch streams
+- Add and manage a list of monitored streamers
 - Records streams in high quality
-- Saves recordings with timestamps for easy organization
-- Handles stream interruptions gracefully
+- Saves recordings with timestamps
 - Simple command-line interface
 
 ## Prerequisites
@@ -15,6 +15,7 @@ A Python script that automatically monitors when a Twitch streamer goes live and
 - Python 3.6+ 
 - pip
 - venv (included with Python standard library)
+- Streamlink
 
 ## Setup and Installation
 
@@ -68,7 +69,21 @@ streamlink --version
 python -m src.twitch_recorder
 ```
 
-3. When prompted, enter the Twitch username of the streamer you want to monitor.
+3. Use the menu to:
+   - Add streamers to your monitoring list
+   - Remove streamers
+   - List monitored streamers
+   - Start monitoring for live streams
+
+4. When monitoring, the script will:
+   - Check which streamers are currently live
+   - Let you choose a single streamer to record
+   - Allow you to stop recording by pressing Enter
+
+### Stopping a Recording
+
+- Press Enter to stop the current recording
+- Use Ctrl+C to interrupt the recording process
 
 ### Deactivating the Virtual Environment
 
@@ -78,23 +93,27 @@ When you're done, you can deactivate the virtual environment:
 deactivate
 ```
 
-## Configuration
-
-You can modify the following parameters in the script:
-- Check interval (default: 5 minutes)
-- Output file format
-- Stream quality (default: best)
-
 ## Recordings
 
 Recorded streams are saved in the `recordings/` directory with filenames in the format:
 `streamer_name_YYYYMMDD_HHMMSS.ts`
+
+## Limitations
+
+- Only one stream can be recorded at a time
+- You must manually start another instance to record multiple streams simultaneously
 
 ## Troubleshooting
 
 - Ensure you have the latest version of Python
 - Make sure Streamlink is correctly installed
 - Check that you have write permissions in the project directory
+
+## Notes
+
+- The script requires an active internet connection
+- Stream quality defaults to the best available option
+- Requires Streamlink to be installed and working correctly
 
 ## License
 
