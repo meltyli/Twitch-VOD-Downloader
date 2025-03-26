@@ -5,15 +5,17 @@ from datetime import datetime
 import os
 import sys
 import signal
-import json
 import threading
+import queue
+import concurrent.futures
 
 class StreamRecorder:
     def __init__(self, config_file='streamers.json'):
         self.config_file = config_file
         self.streamers = self.load_streamers()
-        self.exit_flag = False
+        self.exit_event = threading.Event()
         self.recording_processes = {}
+        self.recording_lock = threading.Lock()
 
     def load_streamers(self):
         """Load list of streamers from JSON file"""
@@ -69,32 +71,85 @@ class StreamRecorder:
             process = subprocess.Popen(command, shell=True)
             
             # Store the process
-            self.recording_processes[channel_name] = process
+            with self.recording_lock:
+                self.recording_processes[channel_name] = process
             
             return process
         except Exception as e:
             print(f"Error recording {channel_name}'s stream: {e}")
             return None
 
-    def monitor_streams(self):
-        """Monitor all added streamers"""
-        print("\n--- Starting Stream Monitoring ---")
-        print(f"Monitoring {len(self.streamers)} streamers")
-        
-        while not self.exit_flag:
-            # Check which streamers are live
-            live_streams = []
-            for streamer in self.streamers:
+    def monitor_stream(self, streamer):
+        """Monitor a single streamer"""
+        while not self.exit_event.is_set():
+            try:
+                # Check if stream is live
                 if self.is_stream_live(streamer):
-                    live_streams.append(streamer)
-            
-            # Record live streams
-            for streamer in live_streams:
-                if streamer not in self.recording_processes:
-                    self.record_stream(streamer)
+                    # Check if not already recording
+                    with self.recording_lock:
+                        if streamer not in self.recording_processes:
+                            self.record_stream(streamer)
+                else:
+                    # If was recording, stop recording
+                    with self.recording_lock:
+                        if streamer in self.recording_processes:
+                            try:
+                                process = self.recording_processes[streamer]
+                                process.terminate()
+                                del self.recording_processes[streamer]
+                                print(f"{streamer}'s stream has ended.")
+                            except Exception as e:
+                                print(f"Error stopping {streamer}'s recording: {e}")
+            except Exception as e:
+                print(f"Error monitoring {streamer}: {e}")
             
             # Wait before next check
-            time.sleep(300)  # 5 minutes between checks
+            self.exit_event.wait(300)  # 5 minutes between checks
+
+    def start_monitoring(self):
+        """Start monitoring all streamers"""
+        if not self.streamers:
+            print("No streamers to monitor.")
+            return
+
+        print("\n--- Starting Stream Monitoring ---")
+        print(f"Monitoring {len(self.streamers)} streamers")
+
+        # Reset exit event
+        self.exit_event.clear()
+
+        # Create a thread for each streamer
+        self.monitor_threads = []
+        for streamer in self.streamers:
+            thread = threading.Thread(target=self.monitor_stream, args=(streamer,))
+            thread.start()
+            self.monitor_threads.append(thread)
+
+        # Wait for user to stop
+        input("Monitoring started. Press Enter to stop...\n")
+
+        # Stop monitoring
+        self.stop_monitoring()
+
+    def stop_monitoring(self):
+        """Stop all monitoring threads and recording processes"""
+        # Set exit event to stop threads
+        self.exit_event.set()
+
+        # Terminate all recording processes
+        with self.recording_lock:
+            for streamer, process in list(self.recording_processes.items()):
+                try:
+                    process.terminate()
+                    del self.recording_processes[streamer]
+                except Exception as e:
+                    print(f"Error terminating {streamer}'s recording: {e}")
+
+        # Wait for all monitor threads to finish
+        for thread in self.monitor_threads:
+            thread.join()
+
+        print("Monitoring stopped.")
 
     def add_streamer(self, streamer):
         """Add a new streamer to monitor"""
@@ -111,12 +166,13 @@ class StreamRecorder:
         streamer = streamer.strip().lower()
         if streamer in self.streamers:
             # Stop recording if currently recording
-            if streamer in self.recording_processes:
-                try:
-                    self.recording_processes[streamer].terminate()
-                    del self.recording_processes[streamer]
-                except:
-                    pass
+            with self.recording_lock:
+                if streamer in self.recording_processes:
+                    try:
+                        self.recording_processes[streamer].terminate()
+                        del self.recording_processes[streamer]
+                    except:
+                        pass
             
             self.streamers.remove(streamer)
             self.save_streamers()
@@ -151,27 +207,8 @@ class StreamRecorder:
                     print("No streamers added. Please add streamers first.")
                     continue
                 
-                # Start monitoring in a separate thread
-                monitor_thread = threading.Thread(target=self.monitor_streams)
-                monitor_thread.start()
-                
-                # Wait for user to stop
-                input("Monitoring started. Press Enter to stop...\n")
-                
-                # Set exit flag and wait for thread to finish
-                self.exit_flag = True
-                monitor_thread.join()
-                
-                # Reset exit flag for potential future monitoring
-                self.exit_flag = False
-                
-                # Terminate any ongoing recordings
-                for streamer, process in list(self.recording_processes.items()):
-                    try:
-                        process.terminate()
-                        del self.recording_processes[streamer]
-                    except:
-                        pass
+                # Start monitoring
+                self.start_monitoring()
             elif choice == '5':
                 print("Exiting Twitch Stream Recorder.")
                 break
