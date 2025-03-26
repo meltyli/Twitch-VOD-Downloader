@@ -8,6 +8,7 @@ import signal
 import threading
 import queue
 import concurrent.futures
+import platform
 
 class StreamRecorder:
     def __init__(self, config_file='streamers.json'):
@@ -16,6 +17,15 @@ class StreamRecorder:
         self.exit_event = threading.Event()
         self.recording_processes = {}
         self.recording_lock = threading.Lock()
+        self.monitor_threads = []
+
+    def clear_screen(self):
+        """Clear the terminal screen across different platforms"""
+        system = platform.system().lower()
+        if system == 'windows':
+            os.system('cls')
+        else:
+            os.system('clear')
 
     def load_streamers(self):
         """Load list of streamers from JSON file"""
@@ -104,12 +114,14 @@ class StreamRecorder:
                 print(f"Error monitoring {streamer}: {e}")
             
             # Wait before next check
-            self.exit_event.wait(300)  # 5 minutes between checks
+            if self.exit_event.wait(300):  # 5 minutes between checks
+                break
 
     def start_monitoring(self):
         """Start monitoring all streamers"""
         if not self.streamers:
             print("No streamers to monitor.")
+            input("Press Enter to continue...")
             return
 
         print("\n--- Starting Stream Monitoring ---")
@@ -118,15 +130,20 @@ class StreamRecorder:
         # Reset exit event
         self.exit_event.clear()
 
-        # Create a thread for each streamer
-        self.monitor_threads = []
-        for streamer in self.streamers:
-            thread = threading.Thread(target=self.monitor_stream, args=(streamer,))
-            thread.start()
-            self.monitor_threads.append(thread)
+        # Create a thread for each streamer using ThreadPoolExecutor
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(self.streamers)) as executor:
+            # Submit monitoring tasks for each streamer
+            futures = {executor.submit(self.monitor_stream, streamer): streamer for streamer in self.streamers}
 
-        # Wait for user to stop
-        input("Monitoring started. Press Enter to stop...\n")
+            # Wait for user to stop or for streams to end
+            try:
+                print("Monitoring started. Press Ctrl+C to stop...\n")
+                # Wait indefinitely 
+                while not self.exit_event.is_set():
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("\nStopping monitoring...")
+                self.exit_event.set()
 
         # Stop monitoring
         self.stop_monitoring()
@@ -141,15 +158,16 @@ class StreamRecorder:
             for streamer, process in list(self.recording_processes.items()):
                 try:
                     process.terminate()
+                    process.wait(timeout=5)  # Wait for process to end
                     del self.recording_processes[streamer]
+                except subprocess.TimeoutExpired:
+                    print(f"Force terminating {streamer}'s recording")
+                    process.kill()
                 except Exception as e:
                     print(f"Error terminating {streamer}'s recording: {e}")
 
-        # Wait for all monitor threads to finish
-        for thread in self.monitor_threads:
-            thread.join()
-
         print("Monitoring stopped.")
+        input("Press Enter to continue...")
 
     def add_streamer(self, streamer):
         """Add a new streamer to monitor"""
@@ -160,6 +178,8 @@ class StreamRecorder:
             print(f"Added {streamer} to monitored streamers.")
         else:
             print("Streamer already exists or invalid name.")
+        
+        input("Press Enter to continue...")
 
     def remove_streamer(self, streamer):
         """Remove a streamer from monitoring"""
@@ -179,10 +199,15 @@ class StreamRecorder:
             print(f"Removed {streamer} from monitored streamers.")
         else:
             print("Streamer not found in the list.")
+        
+        input("Press Enter to continue...")
 
     def menu(self):
         """Main menu for stream recorder"""
         while True:
+            # Clear screen
+            self.clear_screen()
+
             print("\n--- Twitch Stream Recorder ---")
             print("1. Add Streamer")
             print("2. Remove Streamer")
@@ -191,6 +216,9 @@ class StreamRecorder:
             print("5. Exit")
             
             choice = input("Enter your choice (1-5): ")
+            
+            # Clear screen after choice
+            self.clear_screen()
             
             if choice == '1':
                 streamer = input("Enter Twitch username to add: ")
@@ -202,9 +230,11 @@ class StreamRecorder:
                 print("\nCurrently Monitored Streamers:")
                 for streamer in self.streamers:
                     print(streamer)
+                input("Press Enter to continue...")
             elif choice == '4':
                 if not self.streamers:
                     print("No streamers added. Please add streamers first.")
+                    input("Press Enter to continue...")
                     continue
                 
                 # Start monitoring
@@ -214,6 +244,7 @@ class StreamRecorder:
                 break
             else:
                 print("Invalid choice. Please try again.")
+                input("Press Enter to continue...")
 
 def main():
     recorder = StreamRecorder()
