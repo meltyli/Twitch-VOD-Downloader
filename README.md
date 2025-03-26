@@ -21,7 +21,7 @@ A Python script that automatically monitors when a Twitch streamer goes live and
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/twitch-vod-downloader.git
+git clone https://github.com/meltyli/twitch-vod-downloader.git
 cd twitch-vod-downloader
 ```
 
