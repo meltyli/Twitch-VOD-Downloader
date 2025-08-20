@@ -15,6 +15,7 @@ class StreamRecorder:
         self.current_process = None
         self.monitoring_thread = None
         self.stop_monitoring_event = threading.Event()
+        self.recordings_path = 'recordings'  # Default recordings directory
 
     def clear_screen(self):
         """Clear the terminal screen across different platforms"""
@@ -73,11 +74,11 @@ class StreamRecorder:
         """Record a single stream"""
         try:
             # Create recordings directory if it doesn't exist
-            os.makedirs('recordings', exist_ok=True)
+            os.makedirs(self.recordings_path, exist_ok=True)
             
             # Format filename with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = os.path.join('recordings', f"{channel_name}_{timestamp}.ts")
+            output_file = os.path.join(self.recordings_path, f"{channel_name}_{timestamp}.ts")
             
             # Start recording
             print(f"[{datetime.now()}] Recording {channel_name}'s stream to {output_file}")
@@ -344,6 +345,27 @@ class StreamRecorder:
             if self.monitoring_thread:
                 self.monitoring_thread.join()
 
+    def change_save_path(self):
+        """Change the directory where recordings are saved"""
+        print(f"\nCurrent save path: {self.recordings_path}")
+        new_path = input("Enter new save path (or 'q' to cancel): ").strip()
+        
+        if new_path.lower() == 'q':
+            return
+        
+        if new_path:
+            try:
+                # Create the directory if it doesn't exist
+                os.makedirs(new_path, exist_ok=True)
+                self.recordings_path = new_path
+                print(f"Save path changed to: {new_path}")
+            except Exception as e:
+                print(f"Error creating directory: {e}")
+        else:
+            print("Invalid path. Save location unchanged.")
+        
+        input("Press Enter to continue...")
+
     def menu(self):
         """Main menu for stream recorder"""
         while True:
@@ -355,9 +377,10 @@ class StreamRecorder:
             print("2. Remove Streamer")
             print("3. List Monitored Streamers")
             print("4. Start Monitoring")
-            print("5. Exit")
+            print("5. Change Save Path")
+            print("6. Exit")
             
-            choice = input("Enter your choice (1-5): ")
+            choice = input("Enter your choice (1-6): ")
             
             # Clear screen after choice
             self.clear_screen()
@@ -374,6 +397,8 @@ class StreamRecorder:
             elif choice == '4':
                 self.start_monitoring()
             elif choice == '5':
+                self.change_save_path()
+            elif choice == '6':
                 print("Exiting Twitch Stream Recorder.")
                 break
             else:
