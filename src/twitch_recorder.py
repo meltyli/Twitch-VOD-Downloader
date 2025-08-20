@@ -236,7 +236,9 @@ class StreamRecorder:
                         
                         # Ask if user wants to monitor after stream ends
                         monitor_choice = input(f"Do you want to check if {selected_streamer} goes live again after the stream closes? (y/n): ").lower()
-                        self.monitor_after_stream = (monitor_choice == 'y')
+                        if monitor_choice == 'y':
+                            self.monitor_after_stream = True
+                            print("Looping mode on")
                         self.current_streamer = selected_streamer
                         self.current_interval = 2  # Default interval
                         
@@ -294,7 +296,9 @@ class StreamRecorder:
                 
                 # Ask if user wants to monitor after stream ends
                 monitor_choice = input(f"Do you want to check if {selected_streamer} goes live again after a stream closes? (y/n): ").lower()
-                self.monitor_after_stream = (monitor_choice == 'y')
+                if monitor_choice == 'y':
+                    self.monitor_after_stream = True
+                    print("Looping mode on")
 
             # Store current streamer and interval for potential reuse
             self.current_streamer = selected_streamer
