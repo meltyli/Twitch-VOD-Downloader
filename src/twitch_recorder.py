@@ -103,6 +103,17 @@ class StreamRecorder:
                 self.current_process.terminate()
                 self.current_process.wait(timeout=5)
                 print("Recording stopped.")
+                
+                # Add delay before checking again
+                if hasattr(self, 'monitor_after_stream') and self.monitor_after_stream:
+                    print(f"Waiting 30 seconds before checking if {self.current_streamer} is live again...")
+                    time.sleep(30)
+                    
+                    # Resume monitoring with the same settings
+                    if hasattr(self, 'current_streamer') and hasattr(self, 'current_interval'):
+                        print(f"Checking if {self.current_streamer} is live again...")
+                        self.start_monitoring(self.current_streamer, self.current_interval)
+                
             except subprocess.TimeoutExpired:
                 print("Force terminating recording...")
                 self.current_process.kill()
@@ -195,7 +206,7 @@ class StreamRecorder:
             wait_time = check_interval * 60  # convert minutes to seconds
             self.stop_monitoring_event.wait(wait_time)
 
-    def start_monitoring(self):
+    def start_monitoring(self, selected_streamer=None, check_interval=None):
         """Start monitoring streamers with a detailed workflow"""
         if not self.streamers:
             print("No streamers added. Please add streamers first.")
@@ -222,6 +233,13 @@ class StreamRecorder:
                     index = int(choice) - 1
                     if 0 <= index < len(live_streamers):
                         selected_streamer = live_streamers[index]
+                        
+                        # Ask if user wants to monitor after stream ends
+                        monitor_choice = input(f"Do you want to check if {selected_streamer} goes live again after the stream closes? (y/n): ").lower()
+                        self.monitor_after_stream = (monitor_choice == 'y')
+                        self.current_streamer = selected_streamer
+                        self.current_interval = 2  # Default interval
+                        
                         self.record_stream(selected_streamer)
                         return
                     else:
@@ -230,48 +248,57 @@ class StreamRecorder:
                     print("Please enter a valid number.")
         else:
             # No live streamers, ask about periodic checking
-            periodic_check = input("No streamers are currently live. Would you like to periodically check? (y/n): ").lower()
-            
-            if periodic_check != 'y':
-                return
+            if selected_streamer is None:  # Only prompt if not resuming monitoring
+                periodic_check = input("No streamers are currently live. Would you like to periodically check? (y/n): ").lower()
+                
+                if periodic_check != 'y':
+                    return
 
-            # Prompt for streamer to monitor
-            print("\nCurrently Monitored Streamers:")
-            for i, streamer in enumerate(self.streamers, 1):
-                print(f"{i}. {streamer}")
+                # Prompt for streamer to monitor
+                print("\nCurrently Monitored Streamers:")
+                for i, streamer in enumerate(self.streamers, 1):
+                    print(f"{i}. {streamer}")
 
-            while True:
-                try:
-                    streamer_choice = input("\nEnter the number of the streamer to monitor (or 'q' to cancel): ")
-                    
-                    if streamer_choice.lower() == 'q':
-                        return
+                while True:
+                    try:
+                        streamer_choice = input("\nEnter the number of the streamer to monitor (or 'q' to cancel): ")
+                        
+                        if streamer_choice.lower() == 'q':
+                            return
 
-                    index = int(streamer_choice) - 1
-                    if 0 <= index < len(self.streamers):
-                        selected_streamer = self.streamers[index]
+                        index = int(streamer_choice) - 1
+                        if 0 <= index < len(self.streamers):
+                            selected_streamer = self.streamers[index]
+                            break
+                        else:
+                            print("Invalid selection. Please try again.")
+                    except ValueError:
+                        print("Please enter a valid number.")
+
+                # Prompt for check interval with 2-minute default
+                while True:
+                    try:
+                        interval_input = input("Enter check interval in minutes (press Enter for default 2 minutes): ")
+                        
+                        if interval_input == "":
+                            check_interval = 2
+                        else:
+                            check_interval = float(interval_input)
+                        
+                        if check_interval <= 0:
+                            print("Please enter a positive number.")
+                            continue
                         break
-                    else:
-                        print("Invalid selection. Please try again.")
-                except ValueError:
-                    print("Please enter a valid number.")
+                    except ValueError:
+                        print("Please enter a valid number.")
+                
+                # Ask if user wants to monitor after stream ends
+                monitor_choice = input(f"Do you want to check if {selected_streamer} goes live again after a stream closes? (y/n): ").lower()
+                self.monitor_after_stream = (monitor_choice == 'y')
 
-            # Prompt for check interval with 2-minute default
-            while True:
-                try:
-                    interval_input = input("Enter check interval in minutes (press Enter for default 2 minutes): ")
-                    
-                    if interval_input == "":
-                        check_interval = 2
-                    else:
-                        check_interval = float(interval_input)
-                    
-                    if check_interval <= 0:
-                        print("Please enter a positive number.")
-                        continue
-                    break
-                except ValueError:
-                    print("Please enter a valid number.")
+            # Store current streamer and interval for potential reuse
+            self.current_streamer = selected_streamer
+            self.current_interval = check_interval if check_interval is not None else 2
 
             # Reset the stop event
             self.stop_monitoring_event.clear()
