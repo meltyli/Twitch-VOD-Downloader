@@ -209,3 +209,5 @@ recordings/
 *.swo
 
 .DS_Store
+streamers.json
+tree.txt
