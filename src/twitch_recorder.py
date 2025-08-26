@@ -87,12 +87,21 @@ class StreamRecorder:
             command = f"streamlink https://twitch.tv/{channel_name} best -o {output_file}"
             self.current_process = subprocess.Popen(command, shell=True)
             
-            # Wait for the process to complete or be interrupted
-            try:
-                print("Press Enter to stop recording...")
-                input()  # This will block until Enter is pressed
+            # Create a thread to monitor the subprocess
+            def monitor_process():
+                self.current_process.wait()
+                print("Stream ended naturally.")
                 self.stop_recording()
-            except KeyboardInterrupt:
+                
+            monitor_thread = threading.Thread(target=monitor_process)
+            monitor_thread.daemon = True
+            monitor_thread.start()
+            
+            # Wait for user input to manually stop recording
+            print("Press Enter to stop recording manually...")
+            input()  # This still allows manual stopping
+            if self.current_process and self.current_process.poll() is None:
+                # Only stop if process is still running
                 self.stop_recording()
         except Exception as e:
             print(f"Error recording {channel_name}'s stream: {e}")
