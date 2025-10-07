@@ -74,6 +74,7 @@ python -m src.twitch_recorder
    - Remove streamers
    - List monitored streamers
    - Start monitoring for live streams
+   - Change settings (output directory, check interval)
 
 4. When monitoring, the script will:
    - Check which streamers are currently live
@@ -93,9 +94,18 @@ When you're done, you can deactivate the virtual environment:
 deactivate
 ```
 
+## Configuration
+
+Settings are stored in `config.json` and include:
+- List of monitored streamers
+- Output directory for recordings (default: `recordings/`)
+- Default check interval for periodic monitoring (default: 2 minutes)
+
+You can change these settings through the Settings menu (option 5).
+
 ## Recordings
 
-Recorded streams are saved in the `recordings/` directory with filenames in the format:
+Recorded streams are saved in the configured output directory (default: `recordings/`) with filenames in the format:
 `streamer_name_YYYYMMDD_HHMMSS.ts`
 
 ## Limitations

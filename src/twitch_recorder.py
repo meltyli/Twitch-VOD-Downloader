@@ -9,9 +9,12 @@ import platform
 import threading
 
 class StreamRecorder:
-    def __init__(self, config_file='streamers.json'):
+    def __init__(self, config_file='config.json'):
         self.config_file = config_file
-        self.streamers = self.load_streamers()
+        self.config = self.load_config()
+        self.streamers = self.config.get('streamers', [])
+        self.output_directory = self.config.get('output_directory', 'recordings')
+        self.default_check_interval = self.config.get('default_check_interval', 2)
         self.current_process = None
         self.monitoring_thread = None
         self.stop_monitoring_event = threading.Event()
@@ -24,24 +27,38 @@ class StreamRecorder:
         else:
             os.system('clear')
 
-    def load_streamers(self):
-        """Load list of streamers from JSON file"""
+    def load_config(self):
+        """Load configuration from JSON file"""
         try:
             if os.path.exists(self.config_file):
                 with open(self.config_file, 'r') as f:
                     return json.load(f)
-            return []
+            # Return default configuration
+            return {
+                'streamers': [],
+                'output_directory': 'recordings',
+                'default_check_interval': 2
+            }
         except Exception as e:
-            print(f"Error loading streamers: {e}")
-            return []
+            print(f"Error loading config: {e}")
+            return {
+                'streamers': [],
+                'output_directory': 'recordings',
+                'default_check_interval': 2
+            }
 
-    def save_streamers(self):
-        """Save list of streamers to JSON file"""
+    def save_config(self):
+        """Save configuration to JSON file"""
         try:
+            self.config = {
+                'streamers': self.streamers,
+                'output_directory': self.output_directory,
+                'default_check_interval': self.default_check_interval
+            }
             with open(self.config_file, 'w') as f:
-                json.dump(self.streamers, f, indent=4)
+                json.dump(self.config, f, indent=4)
         except Exception as e:
-            print(f"Error saving streamers: {e}")
+            print(f"Error saving config: {e}")
 
     def is_stream_live(self, channel_name):
         """Check if a Twitch channel is currently live."""
@@ -72,12 +89,12 @@ class StreamRecorder:
     def record_stream(self, channel_name):
         """Record a single stream"""
         try:
-            # Create recordings directory if it doesn't exist
-            os.makedirs('recordings', exist_ok=True)
-            
+            # Create output directory if it doesn't exist
+            os.makedirs(self.output_directory, exist_ok=True)
+
             # Format filename with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = os.path.join('recordings', f"{channel_name}_{timestamp}.ts")
+            output_file = os.path.join(self.output_directory, f"{channel_name}_{timestamp}.ts")
             
             # Start recording
             print(f"[{datetime.now()}] Recording {channel_name}'s stream to {output_file}")
@@ -124,7 +141,7 @@ class StreamRecorder:
 
         if streamer and streamer not in self.streamers:
             self.streamers.append(streamer)
-            self.save_streamers()
+            self.save_config()
             print(f"Added {streamer} to monitored streamers.")
         else:
             print("Streamer already exists or invalid name.")
@@ -154,7 +171,7 @@ class StreamRecorder:
             index = int(choice) - 1
             if 0 <= index < len(self.streamers):
                 removed_streamer = self.streamers.pop(index)
-                self.save_streamers()
+                self.save_config()
                 print(f"Removed {removed_streamer} from monitored streamers.")
             else:
                 print("Invalid selection.")
@@ -256,13 +273,13 @@ class StreamRecorder:
                 except ValueError:
                     print("Please enter a valid number.")
 
-            # Prompt for check interval with 2-minute default
+            # Prompt for check interval with configured default
             while True:
                 try:
-                    interval_input = input("Enter check interval in minutes (press Enter for default 2 minutes): ")
-                    
+                    interval_input = input(f"Enter check interval in minutes (press Enter for default {self.default_check_interval} minutes): ")
+
                     if interval_input == "":
-                        check_interval = 2
+                        check_interval = self.default_check_interval
                     else:
                         check_interval = float(interval_input)
                     
@@ -313,6 +330,45 @@ class StreamRecorder:
             if self.monitoring_thread:
                 self.monitoring_thread.join()
 
+    def change_settings(self):
+        """Change application settings"""
+        while True:
+            self.clear_screen()
+            print("\n--- Settings ---")
+            print(f"1. Change Output Directory (Current: {self.output_directory})")
+            print(f"2. Change Default Check Interval (Current: {self.default_check_interval} minutes)")
+            print("3. Back to Main Menu")
+
+            choice = input("Enter your choice (1-3): ")
+
+            if choice == '1':
+                new_dir = input(f"\nEnter new output directory (current: {self.output_directory}): ").strip()
+                if new_dir:
+                    self.output_directory = new_dir
+                    self.save_config()
+                    print(f"Output directory changed to: {self.output_directory}")
+                    input("Press Enter to continue...")
+            elif choice == '2':
+                try:
+                    new_interval = input(f"\nEnter new default check interval in minutes (current: {self.default_check_interval}): ").strip()
+                    if new_interval:
+                        interval = float(new_interval)
+                        if interval > 0:
+                            self.default_check_interval = interval
+                            self.save_config()
+                            print(f"Default check interval changed to: {self.default_check_interval} minutes")
+                        else:
+                            print("Interval must be greater than 0.")
+                    input("Press Enter to continue...")
+                except ValueError:
+                    print("Invalid input. Please enter a valid number.")
+                    input("Press Enter to continue...")
+            elif choice == '3':
+                break
+            else:
+                print("Invalid choice. Please try again.")
+                input("Press Enter to continue...")
+
     def menu(self):
         """Main menu for stream recorder"""
         while True:
@@ -324,13 +380,14 @@ class StreamRecorder:
             print("2. Remove Streamer")
             print("3. List Monitored Streamers")
             print("4. Start Monitoring")
-            print("5. Exit")
-            
-            choice = input("Enter your choice (1-5): ")
-            
+            print("5. Settings")
+            print("6. Exit")
+
+            choice = input("Enter your choice (1-6): ")
+
             # Clear screen after choice
             self.clear_screen()
-            
+
             if choice == '1':
                 self.add_streamer()
             elif choice == '2':
@@ -343,6 +400,8 @@ class StreamRecorder:
             elif choice == '4':
                 self.start_monitoring()
             elif choice == '5':
+                self.change_settings()
+            elif choice == '6':
                 print("Exiting Twitch Stream Recorder.")
                 break
             else:
