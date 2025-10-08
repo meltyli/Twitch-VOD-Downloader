@@ -174,7 +174,7 @@ class StreamRecorder:
                     process.kill()
                     progress.update(task_id, description=f"[red]{channel_name}: Force stopped")
             else:
-                progress.update(task_id, description=f"[blue]{channel_name}: Stream ended")
+                progress.update(task_id, description=f"[blue]{channel_name}: Stream ended, saved to {os.path.basename(output_file)}")
 
         except Exception as e:
             progress.update(task_id, description=f"[red]{channel_name}: Error - {str(e)}")
@@ -182,8 +182,46 @@ class StreamRecorder:
             if channel_name in self.active_recordings:
                 del self.active_recordings[channel_name]
 
-    def record_multiple_streams(self, selected_streamers):
-        """Record multiple streams concurrently with progress bars"""
+    def monitor_and_record_streamer(self, channel_name, check_interval, progress, task_id):
+        """Continuously monitor and record a streamer when they go live"""
+        progress.update(task_id, description=f"[cyan]{channel_name}: Checking if live...")
+
+        while not self.stop_all_recordings.is_set():
+            try:
+                # Check if stream is live
+                if self.is_stream_live(channel_name):
+                    progress.update(task_id, description=f"[yellow]{channel_name}: Stream detected! Starting recording...")
+
+                    # Start recording
+                    self.record_stream_concurrent(channel_name, progress, task_id)
+
+                    # After recording ends, wait a bit before checking again
+                    if not self.stop_all_recordings.is_set():
+                        progress.update(task_id, description=f"[cyan]{channel_name}: Waiting 30s before next check...")
+                        for _ in range(30):
+                            if self.stop_all_recordings.is_set():
+                                break
+                            time.sleep(1)
+                else:
+                    # Not live, show monitoring status
+                    progress.update(task_id, description=f"[dim]{channel_name}: Offline - checking in {check_interval}m...")
+
+                # Wait for check interval
+                if not self.stop_all_recordings.is_set():
+                    wait_time = check_interval * 60
+                    for _ in range(wait_time):
+                        if self.stop_all_recordings.is_set():
+                            break
+                        time.sleep(1)
+
+            except Exception as e:
+                progress.update(task_id, description=f"[red]{channel_name}: Error - {str(e)}")
+                time.sleep(60)  # Wait a minute before retrying on error
+
+        progress.update(task_id, description=f"[blue]{channel_name}: Monitoring stopped")
+
+    def monitor_multiple_streamers(self, selected_streamers, check_interval):
+        """Monitor and record multiple streamers concurrently with progress bars"""
         self.stop_all_recordings.clear()
 
         with Progress(
@@ -197,23 +235,23 @@ class StreamRecorder:
             # Create progress tasks for each streamer
             tasks = {}
             for streamer in selected_streamers:
-                task_id = progress.add_task(f"[cyan]{streamer}: Starting...", total=None)
+                task_id = progress.add_task(f"[cyan]{streamer}: Initializing...", total=None)
                 tasks[streamer] = task_id
 
-            # Start recording threads for each streamer
+            # Start monitoring threads for each streamer
             threads = []
             for streamer in selected_streamers:
                 thread = threading.Thread(
-                    target=self.record_stream_concurrent,
-                    args=(streamer, progress, tasks[streamer])
+                    target=self.monitor_and_record_streamer,
+                    args=(streamer, check_interval, progress, tasks[streamer])
                 )
                 thread.daemon = True
                 thread.start()
                 threads.append(thread)
                 self.recording_threads[streamer] = thread
 
-            # Wait for 'q' input to stop all recordings
-            self.console.print("\n[bold yellow]Press 'q' and Enter to stop all recordings and save[/bold yellow]")
+            # Wait for 'q' input to stop all monitoring/recordings
+            self.console.print("\n[bold yellow]Press 'q' and Enter to stop all monitoring and save any active recordings[/bold yellow]")
 
             # Monitor for 'q' input in a non-blocking way
             input_thread_stop = threading.Event()
@@ -223,6 +261,7 @@ class StreamRecorder:
                     try:
                         user_input = input()
                         if user_input.lower() == 'q':
+                            self.console.print("\n[bold red]Stopping all monitoring and recordings...[/bold red]")
                             self.stop_all_recordings.set()
                             break
                     except:
@@ -238,7 +277,7 @@ class StreamRecorder:
 
             input_thread_stop.set()
 
-            self.console.print("\n[bold green]All recordings completed[/bold green]")
+            self.console.print("\n[bold green]All monitoring stopped[/bold green]")
             self.recording_threads.clear()
 
     def stop_recording(self):
@@ -352,157 +391,73 @@ class StreamRecorder:
             self.stop_monitoring_event.wait(wait_time)
 
     def start_monitoring(self, selected_streamer=None, check_interval=None):
-        """Start monitoring streamers with a detailed workflow"""
+        """Start monitoring streamers with continuous automatic recording"""
         if not self.streamers:
             print("No streamers added. Please add streamers first.")
             input("Press Enter to continue...")
             return
 
-        # First, check for live streamers
-        print("Checking for live streamers...")
-        live_streamers = self.find_live_streamers()
+        # Display all monitored streamers
+        print("\nMonitored Streamers:")
+        for i, streamer in enumerate(self.streamers, 1):
+            print(f"{i}. {streamer}")
 
-        if live_streamers:
-            # If streamers are live, prompt user to choose which to download
-            print("\nLive Streamers:")
-            for i, streamer in enumerate(live_streamers, 1):
-                print(f"{i}. {streamer}")
+        print("\n[Multi-Selection Mode]")
+        print("Enter streamer numbers separated by commas (e.g., 1,2,3) to monitor multiple streamers (max 5)")
+        print("Streams will automatically start recording when they go live")
 
-            print("\n[Multi-Selection Mode]")
-            print("Enter streamer numbers separated by commas (e.g., 1,2,3) to record multiple streams (max 5)")
-            print("Or enter a single number for single stream recording")
+        # Get streamer selection
+        selected_streamers = []
+        while True:
+            try:
+                choice = input("\nEnter your selection (or 'q' to quit): ")
 
-            while True:
-                try:
-                    choice = input("\nEnter your selection (or 'q' to quit): ")
-
-                    if choice.lower() == 'q':
-                        return
-
-                    # Check if it's a multi-selection (contains comma)
-                    if ',' in choice:
-                        # Multi-selection mode
-                        indices = [int(x.strip()) - 1 for x in choice.split(',')]
-
-                        # Validate all selections
-                        if all(0 <= idx < len(live_streamers) for idx in indices):
-                            if len(indices) > 5:
-                                print("You can only select up to 5 streamers at once. Please try again.")
-                                continue
-
-                            selected_streamers = [live_streamers[idx] for idx in indices]
-                            print(f"\nSelected streamers: {', '.join(selected_streamers)}")
-
-                            # Start concurrent recording
-                            self.record_multiple_streams(selected_streamers)
-                            return
-                        else:
-                            print("Invalid selection. Please try again.")
-                    else:
-                        # Single selection mode (backward compatibility)
-                        index = int(choice) - 1
-                        if 0 <= index < len(live_streamers):
-                            selected_streamer = live_streamers[index]
-
-                            # Ask if user wants to monitor after stream ends
-                            monitor_choice = input(f"Do you want to check if {selected_streamer} goes live again after the stream closes? (y/n): ").lower()
-                            if monitor_choice == 'y':
-                                self.monitor_after_stream = True
-                                print("Looping mode on")
-                            self.current_streamer = selected_streamer
-                            self.current_interval = 2  # Default interval
-
-                            self.record_stream(selected_streamer)
-                            return
-                        else:
-                            print("Invalid selection. Please try again.")
-                except ValueError:
-                    print("Invalid input. Please enter valid numbers.")
-        else:
-            # No live streamers, ask about periodic checking
-            if selected_streamer is None:  # Only prompt if not resuming monitoring
-                periodic_check = input("No streamers are currently live. Would you like to periodically check? (y/n): ").lower()
-                
-                if periodic_check != 'y':
+                if choice.lower() == 'q':
                     return
 
-                # Prompt for streamer to monitor
-                print("\nCurrently Monitored Streamers:")
-                for i, streamer in enumerate(self.streamers, 1):
-                    print(f"{i}. {streamer}")
+                # Parse selection (handles both single and multi-selection)
+                if ',' in choice:
+                    indices = [int(x.strip()) - 1 for x in choice.split(',')]
+                else:
+                    indices = [int(choice.strip()) - 1]
 
-                while True:
-                    try:
-                        streamer_choice = input("\nEnter the number of the streamer to monitor (or 'q' to cancel): ")
-                        
-                        if streamer_choice.lower() == 'q':
-                            return
-
-                        index = int(streamer_choice) - 1
-                        if 0 <= index < len(self.streamers):
-                            selected_streamer = self.streamers[index]
-                            break
-                        else:
-                            print("Invalid selection. Please try again.")
-                    except ValueError:
-                        print("Please enter a valid number.")
-
-            # Prompt for check interval with configured default
-            while True:
-                try:
-                    interval_input = input(f"Enter check interval in minutes (press Enter for default {self.default_check_interval} minutes): ")
-
-                    if interval_input == "":
-                        check_interval = self.default_check_interval
-                    else:
-                        check_interval = float(interval_input)
-                    
-                    if check_interval <= 0:
-                        print("Please enter a positive number.")
+                # Validate all selections
+                if all(0 <= idx < len(self.streamers) for idx in indices):
+                    if len(indices) > 5:
+                        print("You can only select up to 5 streamers at once. Please try again.")
                         continue
+
+                    selected_streamers = [self.streamers[idx] for idx in indices]
+                    print(f"\nSelected streamers: {', '.join(selected_streamers)}")
                     break
-                except ValueError:
-                    print("Please enter a valid number.")
+                else:
+                    print("Invalid selection. Please try again.")
+            except ValueError:
+                print("Invalid input. Please enter valid numbers.")
 
-            # Reset the stop event
-            self.stop_monitoring_event.clear()
+        # Get check interval
+        while True:
+            try:
+                interval_input = input(f"\nEnter check interval in minutes (press Enter for default {self.default_check_interval} minutes): ")
 
-            # Start periodic checking thread
-            def continuous_monitoring(selected_streamer, check_interval):
-                while not self.stop_monitoring_event.is_set():
-                    try:
-                        print(f"\nChecking if {selected_streamer} is live...")
-                        
-                        if self.is_stream_live(selected_streamer):
-                            print(f"\n{selected_streamer} is live! Starting recording...")
-                            self.record_stream(selected_streamer)
-                            
-                            # After recording ends, continue monitoring
-                            print(f"Waiting for next stream from {selected_streamer}...")
-                        
-                        # Wait for the specified interval
-                        wait_time = check_interval * 60  # convert minutes to seconds
-                        self.stop_monitoring_event.wait(wait_time)
-                    
-                    except Exception as e:
-                        print(f"Error during monitoring: {e}")
-                        break
+                if interval_input == "":
+                    check_interval = self.default_check_interval
+                else:
+                    check_interval = float(interval_input)
 
-            # Start monitoring thread
-            self.monitoring_thread = threading.Thread(
-                target=continuous_monitoring, 
-                args=(selected_streamer, check_interval)
-            )
-            self.monitoring_thread.start()
+                if check_interval <= 0:
+                    print("Please enter a positive number.")
+                    continue
+                break
+            except ValueError:
+                print("Please enter a valid number.")
 
-            print(f"\nMonitoring {selected_streamer} every {check_interval} minutes.")
-            print("Press Enter to stop monitoring...")
-            input()
+        print(f"\nStarting continuous monitoring for {len(selected_streamers)} streamer(s)")
+        print("Streams will automatically record when live and resume monitoring after they end")
+        print()
 
-            # Stop the monitoring
-            self.stop_monitoring_event.set()
-            if self.monitoring_thread:
-                self.monitoring_thread.join()
+        # Start monitoring
+        self.monitor_multiple_streamers(selected_streamers, check_interval)
 
     def change_settings(self):
         """Change application settings"""
