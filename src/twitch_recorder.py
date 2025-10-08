@@ -7,6 +7,10 @@ import sys
 import signal
 import platform
 import threading
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, DownloadColumn, TimeRemainingColumn
+from rich.live import Live
+from rich.table import Table
 
 class StreamRecorder:
     def __init__(self, config_file='config.json'):
@@ -15,10 +19,14 @@ class StreamRecorder:
         self.streamers = self.config.get('streamers', [])
         self.output_directory = self.config.get('output_directory', 'recordings')
         self.default_check_interval = self.config.get('default_check_interval', 2)
-        self.current_process = None
+        self.current_process = None  # Keep for backward compatibility with old methods
+        self.active_recordings = {}  # Dictionary of {streamer_name: process}
+        self.recording_threads = {}  # Dictionary of {streamer_name: thread}
         self.monitoring_thread = None
         self.stop_monitoring_event = threading.Event()
+        self.stop_all_recordings = threading.Event()
         self.recordings_path = 'recordings'  # Default recordings directory
+        self.console = Console()
 
     def clear_screen(self):
         """Clear the terminal screen across different platforms"""
@@ -123,6 +131,116 @@ class StreamRecorder:
         except Exception as e:
             print(f"Error recording {channel_name}'s stream: {e}")
 
+    def record_stream_concurrent(self, channel_name, progress, task_id):
+        """Record a single stream with progress tracking"""
+        try:
+            # Create output directory if it doesn't exist
+            os.makedirs(self.output_directory, exist_ok=True)
+
+            # Format filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = os.path.join(self.output_directory, f"{channel_name}_{timestamp}.ts")
+
+            # Start recording
+            progress.update(task_id, description=f"[green]{channel_name}: Recording...")
+
+            # Use subprocess to start recording
+            command = f"streamlink https://twitch.tv/{channel_name} best -o {output_file}"
+            process = subprocess.Popen(
+                command,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+
+            self.active_recordings[channel_name] = process
+
+            # Monitor the process
+            while process.poll() is None and not self.stop_all_recordings.is_set():
+                # Check file size for progress indication
+                if os.path.exists(output_file):
+                    file_size = os.path.getsize(output_file)
+                    progress.update(task_id, completed=file_size / (1024 * 1024))  # Convert to MB
+                time.sleep(1)
+
+            # Process ended or stop requested
+            if self.stop_all_recordings.is_set() and process.poll() is None:
+                progress.update(task_id, description=f"[yellow]{channel_name}: Stopping gracefully...")
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                    progress.update(task_id, description=f"[blue]{channel_name}: Stopped and saved")
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    progress.update(task_id, description=f"[red]{channel_name}: Force stopped")
+            else:
+                progress.update(task_id, description=f"[blue]{channel_name}: Stream ended")
+
+        except Exception as e:
+            progress.update(task_id, description=f"[red]{channel_name}: Error - {str(e)}")
+        finally:
+            if channel_name in self.active_recordings:
+                del self.active_recordings[channel_name]
+
+    def record_multiple_streams(self, selected_streamers):
+        """Record multiple streams concurrently with progress bars"""
+        self.stop_all_recordings.clear()
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.completed:.1f}MB"),
+            console=self.console
+        ) as progress:
+
+            # Create progress tasks for each streamer
+            tasks = {}
+            for streamer in selected_streamers:
+                task_id = progress.add_task(f"[cyan]{streamer}: Starting...", total=None)
+                tasks[streamer] = task_id
+
+            # Start recording threads for each streamer
+            threads = []
+            for streamer in selected_streamers:
+                thread = threading.Thread(
+                    target=self.record_stream_concurrent,
+                    args=(streamer, progress, tasks[streamer])
+                )
+                thread.daemon = True
+                thread.start()
+                threads.append(thread)
+                self.recording_threads[streamer] = thread
+
+            # Wait for 'q' input to stop all recordings
+            self.console.print("\n[bold yellow]Press 'q' and Enter to stop all recordings and save[/bold yellow]")
+
+            # Monitor for 'q' input in a non-blocking way
+            input_thread_stop = threading.Event()
+
+            def wait_for_quit():
+                while not input_thread_stop.is_set():
+                    try:
+                        user_input = input()
+                        if user_input.lower() == 'q':
+                            self.stop_all_recordings.set()
+                            break
+                    except:
+                        break
+
+            input_thread = threading.Thread(target=wait_for_quit)
+            input_thread.daemon = True
+            input_thread.start()
+
+            # Wait for all threads to complete or stop signal
+            for thread in threads:
+                thread.join()
+
+            input_thread_stop.set()
+
+            self.console.print("\n[bold green]All recordings completed[/bold green]")
+            self.recording_threads.clear()
+
     def stop_recording(self):
         """Stop the current recording"""
         if self.current_process:
@@ -130,17 +248,17 @@ class StreamRecorder:
                 self.current_process.terminate()
                 self.current_process.wait(timeout=5)
                 print("Recording stopped.")
-                
+
                 # Add delay before checking again
                 if hasattr(self, 'monitor_after_stream') and self.monitor_after_stream:
                     print(f"Waiting 30 seconds before checking if {self.current_streamer} is live again...")
                     time.sleep(30)
-                    
+
                     # Resume monitoring with the same settings
                     if hasattr(self, 'current_streamer') and hasattr(self, 'current_interval'):
                         print(f"Checking if {self.current_streamer} is live again...")
                         self.start_monitoring(self.current_streamer, self.current_interval)
-                
+
             except subprocess.TimeoutExpired:
                 print("Force terminating recording...")
                 self.current_process.kill()
@@ -249,32 +367,57 @@ class StreamRecorder:
             print("\nLive Streamers:")
             for i, streamer in enumerate(live_streamers, 1):
                 print(f"{i}. {streamer}")
-            
+
+            print("\n[Multi-Selection Mode]")
+            print("Enter streamer numbers separated by commas (e.g., 1,2,3) to record multiple streams (max 5)")
+            print("Or enter a single number for single stream recording")
+
             while True:
                 try:
-                    choice = input("\nEnter the number of the streamer to record (or 'q' to quit): ")
-                    
+                    choice = input("\nEnter your selection (or 'q' to quit): ")
+
                     if choice.lower() == 'q':
                         return
 
-                    index = int(choice) - 1
-                    if 0 <= index < len(live_streamers):
-                        selected_streamer = live_streamers[index]
-                        
-                        # Ask if user wants to monitor after stream ends
-                        monitor_choice = input(f"Do you want to check if {selected_streamer} goes live again after the stream closes? (y/n): ").lower()
-                        if monitor_choice == 'y':
-                            self.monitor_after_stream = True
-                            print("Looping mode on")
-                        self.current_streamer = selected_streamer
-                        self.current_interval = 2  # Default interval
-                        
-                        self.record_stream(selected_streamer)
-                        return
+                    # Check if it's a multi-selection (contains comma)
+                    if ',' in choice:
+                        # Multi-selection mode
+                        indices = [int(x.strip()) - 1 for x in choice.split(',')]
+
+                        # Validate all selections
+                        if all(0 <= idx < len(live_streamers) for idx in indices):
+                            if len(indices) > 5:
+                                print("You can only select up to 5 streamers at once. Please try again.")
+                                continue
+
+                            selected_streamers = [live_streamers[idx] for idx in indices]
+                            print(f"\nSelected streamers: {', '.join(selected_streamers)}")
+
+                            # Start concurrent recording
+                            self.record_multiple_streams(selected_streamers)
+                            return
+                        else:
+                            print("Invalid selection. Please try again.")
                     else:
-                        print("Invalid selection. Please try again.")
+                        # Single selection mode (backward compatibility)
+                        index = int(choice) - 1
+                        if 0 <= index < len(live_streamers):
+                            selected_streamer = live_streamers[index]
+
+                            # Ask if user wants to monitor after stream ends
+                            monitor_choice = input(f"Do you want to check if {selected_streamer} goes live again after the stream closes? (y/n): ").lower()
+                            if monitor_choice == 'y':
+                                self.monitor_after_stream = True
+                                print("Looping mode on")
+                            self.current_streamer = selected_streamer
+                            self.current_interval = 2  # Default interval
+
+                            self.record_stream(selected_streamer)
+                            return
+                        else:
+                            print("Invalid selection. Please try again.")
                 except ValueError:
-                    print("Please enter a valid number.")
+                    print("Invalid input. Please enter valid numbers.")
         else:
             # No live streamers, ask about periodic checking
             if selected_streamer is None:  # Only prompt if not resuming monitoring
