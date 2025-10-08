@@ -65,11 +65,18 @@ streamlink --version
 1. Ensure your virtual environment is activated
 
 2. Run the script:
+
+- On macOS / Linux (recommended):
+```bash
+./launch.sh
+```
+
+- Or run directly with Python in a terminal / command prompt:
 ```bash
 python -m src.twitch_recorder
 ```
 
-3. Use the menu to:
+3. Follow the prompts shown by the script. Use the menu to:
    - Add streamers to your monitoring list
    - Remove streamers
    - List monitored streamers
@@ -83,7 +90,7 @@ python -m src.twitch_recorder
 
 ### Stopping a Recording
 
-- Press Enter to stop the current recording
+- Press `q` and then `Enter` to stop the current recording
 - Use Ctrl+C to interrupt the recording process
 
 ### Deactivating the Virtual Environment
