@@ -669,24 +669,18 @@ class StreamRecorder:
         print("="*60)
         input("\nPress Enter to continue...")
 
-    def menu(self):
-        """Main menu for stream recorder"""
+    def manage_streamers_menu(self):
+        """Submenu for managing streamers"""
         while True:
-            # Clear screen
             self.clear_screen()
-
-            print("\n--- Twitch Stream Recorder ---")
+            print("\n--- Manage Streamers ---")
             print("1. Add Streamer")
             print("2. Remove Streamer")
             print("3. List Monitored Streamers")
-            print("4. Start Monitoring")
-            print("5. Remux Recordings to MP4")
-            print("6. Settings")
-            print("7. Exit")
+            print("4. Back to Main Menu")
 
-            choice = input("Enter your choice (1-7): ")
+            choice = input("Enter your choice (1-4): ")
 
-            # Clear screen after choice
             self.clear_screen()
 
             if choice == '1':
@@ -699,12 +693,38 @@ class StreamRecorder:
                     print(streamer)
                 input("Press Enter to continue...")
             elif choice == '4':
+                break
+            else:
+                print("Invalid choice. Please try again.")
+                input("Press Enter to continue...")
+
+    def menu(self):
+        """Main menu for stream recorder"""
+        while True:
+            # Clear screen
+            self.clear_screen()
+
+            print("\n--- Twitch Stream Recorder ---")
+            print("1. Manage Streamers")
+            print("2. Start Monitoring")
+            print("3. Remux Recordings to MP4")
+            print("4. Settings")
+            print("5. Exit")
+
+            choice = input("Enter your choice (1-5): ")
+
+            # Clear screen after choice
+            self.clear_screen()
+
+            if choice == '1':
+                self.manage_streamers_menu()
+            elif choice == '2':
                 self.start_monitoring()
-            elif choice == '5':
+            elif choice == '3':
                 self.remux_recordings()
-            elif choice == '6':
+            elif choice == '4':
                 self.change_settings()
-            elif choice == '7':
+            elif choice == '5':
                 print("Exiting Twitch Stream Recorder.")
                 break
             else:
