@@ -9,6 +9,8 @@ if [ ! -d "myenv" ]; then
     pip install -r requirements.txt
 else
     source myenv/bin/activate
+    echo "Installing/updating dependencies..."
+    pip install -r requirements.txt
 fi
 
 python3 -m src.twitch_recorder
