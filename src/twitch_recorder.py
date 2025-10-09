@@ -1,7 +1,7 @@
+from datetime import datetime
 import time
 import subprocess
 import json
-from datetime import datetime
 import os
 import sys
 import signal
@@ -18,6 +18,7 @@ class StreamRecorder:
         self.config = self.load_config()
         self.streamers = self.config.get('streamers', [])
         self.output_directory = self.config.get('output_directory', 'recordings')
+        self.compressed_directory = self.config.get('compressed_directory', os.path.join(self.output_directory, 'compressed'))
         self.default_check_interval = self.config.get('default_check_interval', 2)
         self.current_process = None  # Keep for backward compatibility with old methods
         self.active_recordings = {}  # Dictionary of {streamer_name: process}
@@ -41,7 +42,26 @@ class StreamRecorder:
         try:
             if os.path.exists(self.config_file):
                 with open(self.config_file, 'r') as f:
-                    return json.load(f)
+                    config = json.load(f)
+                    # Add compressed_directory if not present
+                    if 'compressed_directory' not in config:
+                        config['compressed_directory'] = os.path.join(config.get('output_directory', 'recordings'), 'compressed')
+                    return config
+            # Return default configuration
+            return {
+                'streamers': [],
+                'output_directory': 'recordings',
+                'compressed_directory': 'recordings/compressed',
+                'default_check_interval': 2
+            }
+        except Exception as e:
+            print(f"Error loading config: {e}")
+            return {
+                'streamers': [],
+                'output_directory': 'recordings',
+                'compressed_directory': 'recordings/compressed',
+                'default_check_interval': 2
+            }
             # Return default configuration
             return {
                 'streamers': [],
@@ -62,6 +82,7 @@ class StreamRecorder:
             self.config = {
                 'streamers': self.streamers,
                 'output_directory': self.output_directory,
+                'compressed_directory': self.compressed_directory,
                 'default_check_interval': self.default_check_interval
             }
             with open(self.config_file, 'w') as f:
@@ -465,10 +486,11 @@ class StreamRecorder:
             self.clear_screen()
             print("\n--- Settings ---")
             print(f"1. Change Output Directory (Current: {self.output_directory})")
-            print(f"2. Change Default Check Interval (Current: {self.default_check_interval} minutes)")
-            print("3. Back to Main Menu")
+            print(f"2. Change Compressed Output Directory (Current: {self.compressed_directory})")
+            print(f"3. Change Default Check Interval (Current: {self.default_check_interval} minutes)")
+            print("4. Back to Main Menu")
 
-            choice = input("Enter your choice (1-3): ")
+            choice = input("Enter your choice (1-4): ")
 
             if choice == '1':
                 new_dir = input(f"\nEnter new output directory (current: {self.output_directory}): ").strip()
@@ -478,6 +500,13 @@ class StreamRecorder:
                     print(f"Output directory changed to: {self.output_directory}")
                     input("Press Enter to continue...")
             elif choice == '2':
+                new_dir = input(f"\nEnter new compressed output directory (current: {self.compressed_directory}): ").strip()
+                if new_dir:
+                    self.compressed_directory = new_dir
+                    self.save_config()
+                    print(f"Compressed output directory changed to: {self.compressed_directory}")
+                    input("Press Enter to continue...")
+            elif choice == '3':
                 try:
                     new_interval = input(f"\nEnter new default check interval in minutes (current: {self.default_check_interval}): ").strip()
                     if new_interval:
@@ -492,11 +521,153 @@ class StreamRecorder:
                 except ValueError:
                     print("Invalid input. Please enter a valid number.")
                     input("Press Enter to continue...")
-            elif choice == '3':
+            elif choice == '4':
                 break
             else:
                 print("Invalid choice. Please try again.")
                 input("Press Enter to continue...")
+
+    def remux_recordings(self):
+        """Remux .ts recordings to .mp4 format"""
+        from pathlib import Path
+        import src.remux_ts_to_mp4 as remux_module
+        
+        # Find .ts files in the output directory
+        output_path = Path(self.output_directory)
+        if not output_path.exists():
+            print(f"Output directory does not exist: {self.output_directory}")
+            input("Press Enter to continue...")
+            return
+        
+        ts_files = sorted(output_path.glob("*.ts"))
+        
+        if not ts_files:
+            print(f"No .ts files found in {self.output_directory}")
+            input("Press Enter to continue...")
+            return
+        
+        print(f"\nFound {len(ts_files)} .ts file(s) to remux:\n")
+        for i, ts_file in enumerate(ts_files, 1):
+            file_size = ts_file.stat().st_size / (1024 * 1024 * 1024)  # GB
+            print(f"{i}. {ts_file.name} ({file_size:.2f} GB)")
+        
+        print("\nRemux Options:")
+        print("1. Remux all files")
+        print("2. Select specific files")
+        print("3. Cancel")
+        
+        choice = input("\nEnter your choice (1-3): ").strip()
+        
+        selected_files = []
+        
+        if choice == '1':
+            selected_files = ts_files
+        elif choice == '2':
+            file_nums = input("\nEnter file numbers separated by commas (e.g., 1,2,3): ").strip()
+            try:
+                indices = [int(x.strip()) - 1 for x in file_nums.split(',')]
+                selected_files = [ts_files[i] for i in indices if 0 <= i < len(ts_files)]
+                if not selected_files:
+                    print("No valid files selected.")
+                    input("Press Enter to continue...")
+                    return
+            except (ValueError, IndexError):
+                print("Invalid input.")
+                input("Press Enter to continue...")
+                return
+        elif choice == '3':
+            return
+        else:
+            print("Invalid choice.")
+            input("Press Enter to continue...")
+            return
+        
+        # Create compressed directory if it doesn't exist
+        compressed_path = Path(self.compressed_directory)
+        try:
+            compressed_path.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            print(f"Error creating compressed directory: {e}")
+            input("Press Enter to continue...")
+            return
+        
+        print(f"\nWill remux {len(selected_files)} file(s) to: {self.compressed_directory}")
+        
+        auto_delete = input("\nAutomatically delete original .ts files after successful remux? [y/N]: ").strip().lower()
+        auto_yes = auto_delete in ['y', 'yes']
+        
+        # Check for ffmpeg
+        if not remux_module.check_ffmpeg_installed():
+            print("\n[ERROR] ffmpeg and ffprobe are required but not found on PATH")
+            print("Install with: brew install ffmpeg (macOS) or apt-get install ffmpeg (Linux)")
+            input("\nPress Enter to continue...")
+            return
+        
+        print("\nStarting remux process...\n")
+        
+        stats = remux_module.RemuxStats()
+        stats.total_found = len(selected_files)
+        
+        for ts_file in selected_files:
+            output_file = compressed_path / ts_file.with_suffix('.mp4').name
+            
+            # Check if already exists and valid
+            if remux_module.mp4_exists_and_valid(output_file):
+                print(f"[INFO] Skipping {ts_file.name} - valid MP4 already exists")
+                stats.skipped_existing += 1
+                continue
+            
+            print(f"[PROGRESS] Processing: {ts_file.name}")
+            print(f"[INFO] Remuxing {ts_file.name} -> {output_file.name}")
+            
+            if not remux_module.remux_file(ts_file, output_file, allow_video_only=False):
+                print(f"[ERROR] Remux failed for {ts_file.name}")
+                stats.failed += 1
+                stats.errors.append((ts_file.name, "Remux failed"))
+                continue
+            
+            print(f"[INFO] Verifying {output_file.name}")
+            success, message = remux_module.verify_remux(ts_file, output_file)
+            
+            if not success:
+                print(f"[ERROR] Verification failed for {output_file.name}: {message}")
+                stats.failed += 1
+                stats.errors.append((ts_file.name, message))
+                continue
+            
+            print(f"[SUCCESS] Successfully remuxed and verified: {output_file.name}")
+            stats.succeeded += 1
+            stats.processed += 1
+            
+            # Handle deletion
+            if auto_yes or remux_module.prompt_delete(ts_file, False):
+                try:
+                    ts_file.unlink()
+                    print(f"[INFO] Deleted original: {ts_file.name}")
+                    stats.deleted += 1
+                except Exception as e:
+                    print(f"[WARNING] Failed to delete {ts_file.name}: {e}")
+            else:
+                print(f"[INFO] Kept original: {ts_file.name}")
+        
+        # Print summary
+        print("\n" + "="*60)
+        print("Remux Summary")
+        print("="*60)
+        print(f"Total .ts files found: {stats.total_found}")
+        print(f"Skipped (valid MP4 exists): {stats.skipped_existing}")
+        print(f"Processed: {stats.processed}")
+        print(f"Succeeded: {stats.succeeded}")
+        print(f"Failed: {stats.failed}")
+        print(f"Originals deleted: {stats.deleted}")
+        
+        if stats.errors:
+            print("\nErrors:")
+            for filename, error in stats.errors:
+                print(f"  - {filename}: {error}")
+        
+        print("="*60)
+        input("\nPress Enter to continue...")
 
     def menu(self):
         """Main menu for stream recorder"""
@@ -509,10 +680,11 @@ class StreamRecorder:
             print("2. Remove Streamer")
             print("3. List Monitored Streamers")
             print("4. Start Monitoring")
-            print("5. Settings")
-            print("6. Exit")
+            print("5. Remux Recordings to MP4")
+            print("6. Settings")
+            print("7. Exit")
 
-            choice = input("Enter your choice (1-6): ")
+            choice = input("Enter your choice (1-7): ")
 
             # Clear screen after choice
             self.clear_screen()
@@ -529,8 +701,10 @@ class StreamRecorder:
             elif choice == '4':
                 self.start_monitoring()
             elif choice == '5':
-                self.change_settings()
+                self.remux_recordings()
             elif choice == '6':
+                self.change_settings()
+            elif choice == '7':
                 print("Exiting Twitch Stream Recorder.")
                 break
             else:
