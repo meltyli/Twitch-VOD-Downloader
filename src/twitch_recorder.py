@@ -20,6 +20,8 @@ class StreamRecorder:
         self.output_directory = self.config.get('output_directory', 'recordings')
         self.compressed_directory = self.config.get('compressed_directory', os.path.join(self.output_directory, 'compressed'))
         self.default_check_interval = self.config.get('default_check_interval', 2)
+        self.default_crf = self.config.get('default_crf', 28)
+        self.default_preset = self.config.get('default_preset', 'medium')
         self.current_process = None  # Keep for backward compatibility with old methods
         self.active_recordings = {}  # Dictionary of {streamer_name: process}
         self.recording_threads = {}  # Dictionary of {streamer_name: thread}
@@ -46,13 +48,20 @@ class StreamRecorder:
                     # Add compressed_directory if not present
                     if 'compressed_directory' not in config:
                         config['compressed_directory'] = os.path.join(config.get('output_directory', 'recordings'), 'compressed')
+                    # Add compression defaults if not present
+                    if 'default_crf' not in config:
+                        config['default_crf'] = 28
+                    if 'default_preset' not in config:
+                        config['default_preset'] = 'medium'
                     return config
             # Return default configuration
             return {
                 'streamers': [],
                 'output_directory': 'recordings',
                 'compressed_directory': 'recordings/compressed',
-                'default_check_interval': 2
+                'default_check_interval': 2,
+                'default_crf': 28,
+                'default_preset': 'medium'
             }
         except Exception as e:
             print(f"Error loading config: {e}")
@@ -60,20 +69,9 @@ class StreamRecorder:
                 'streamers': [],
                 'output_directory': 'recordings',
                 'compressed_directory': 'recordings/compressed',
-                'default_check_interval': 2
-            }
-            # Return default configuration
-            return {
-                'streamers': [],
-                'output_directory': 'recordings',
-                'default_check_interval': 2
-            }
-        except Exception as e:
-            print(f"Error loading config: {e}")
-            return {
-                'streamers': [],
-                'output_directory': 'recordings',
-                'default_check_interval': 2
+                'default_check_interval': 2,
+                'default_crf': 28,
+                'default_preset': 'medium'
             }
 
     def save_config(self):
@@ -83,7 +81,9 @@ class StreamRecorder:
                 'streamers': self.streamers,
                 'output_directory': self.output_directory,
                 'compressed_directory': self.compressed_directory,
-                'default_check_interval': self.default_check_interval
+                'default_check_interval': self.default_check_interval,
+                'default_crf': self.default_crf,
+                'default_preset': self.default_preset
             }
             with open(self.config_file, 'w') as f:
                 json.dump(self.config, f, indent=4)
@@ -488,9 +488,11 @@ class StreamRecorder:
             print(f"1. Change Output Directory (Current: {self.output_directory})")
             print(f"2. Change Compressed Output Directory (Current: {self.compressed_directory})")
             print(f"3. Change Default Check Interval (Current: {self.default_check_interval} minutes)")
-            print("4. Back to Main Menu")
+            print(f"4. Change Default Compression CRF (Current: {self.default_crf})")
+            print(f"5. Change Default Compression Preset (Current: {self.default_preset})")
+            print("q. Back to Main Menu")
 
-            choice = input("Enter your choice (1-4): ")
+            choice = input("Enter your choice (1-5, q): ").strip().lower()
 
             if choice == '1':
                 new_dir = input(f"\nEnter new output directory (current: {self.output_directory}): ").strip()
@@ -522,15 +524,44 @@ class StreamRecorder:
                     print("Invalid input. Please enter a valid number.")
                     input("Press Enter to continue...")
             elif choice == '4':
+                try:
+                    print("\nCRF (Constant Rate Factor): 0-51 (lower = better quality, larger file)")
+                    print("Recommended: 23-28")
+                    new_crf = input(f"Enter new default CRF (current: {self.default_crf}): ").strip()
+                    if new_crf:
+                        crf = int(new_crf)
+                        if 0 <= crf <= 51:
+                            self.default_crf = crf
+                            self.save_config()
+                            print(f"Default CRF changed to: {self.default_crf}")
+                        else:
+                            print("CRF must be between 0 and 51.")
+                    input("Press Enter to continue...")
+                except ValueError:
+                    print("Invalid input. Please enter a valid number.")
+                    input("Press Enter to continue...")
+            elif choice == '5':
+                print("\nAvailable presets: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow")
+                print("Slower = better compression but longer encoding time")
+                new_preset = input(f"Enter new default preset (current: {self.default_preset}): ").strip().lower()
+                valid_presets = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"]
+                if new_preset in valid_presets:
+                    self.default_preset = new_preset
+                    self.save_config()
+                    print(f"Default preset changed to: {self.default_preset}")
+                elif new_preset:
+                    print("Invalid preset. No changes made.")
+                input("Press Enter to continue...")
+            elif choice == 'q':
                 break
             else:
                 print("Invalid choice. Please try again.")
                 input("Press Enter to continue...")
 
-    def remux_recordings(self):
-        """Remux .ts recordings to .mp4 format"""
+    def compress_recordings(self):
+        """Compress .ts recordings to .mp4 format with H.265"""
         from pathlib import Path
-        import src.remux_ts_to_mp4 as remux_module
+        import src.remux_ts_to_mp4 as compress_module
         
         # Find .ts files in the output directory
         output_path = Path(self.output_directory)
@@ -546,13 +577,13 @@ class StreamRecorder:
             input("Press Enter to continue...")
             return
         
-        print(f"\nFound {len(ts_files)} .ts file(s) to remux:\n")
+        print(f"\nFound {len(ts_files)} .ts file(s) to compress:\n")
         for i, ts_file in enumerate(ts_files, 1):
             file_size = ts_file.stat().st_size / (1024 * 1024 * 1024)  # GB
             print(f"{i}. {ts_file.name} ({file_size:.2f} GB)")
         
-        print("\nRemux Options:")
-        print("1. Remux all files")
+        print("\nCompress Options:")
+        print("1. Compress all files")
         print("2. Select specific files")
         print("3. Cancel")
         
@@ -582,6 +613,35 @@ class StreamRecorder:
             input("Press Enter to continue...")
             return
         
+        # Get compression settings
+        print("\nCompression Quality Settings:")
+        print("CRF (Constant Rate Factor): 0-51 (lower = better quality, larger file)")
+        print("  Recommended: 23-28 (default: 28)")
+        crf_input = input(f"Enter CRF value (press Enter for default {self.default_crf}): ").strip()
+        try:
+            crf = int(crf_input) if crf_input else self.default_crf
+            if not 0 <= crf <= 51:
+                print(f"CRF must be between 0 and 51. Using default {self.default_crf}.")
+                crf = self.default_crf
+        except ValueError:
+            print(f"Invalid CRF value. Using default {self.default_crf}.")
+            crf = self.default_crf
+        
+        print("\nPreset (encoding speed): ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow")
+        print("  Slower = better compression but longer encoding time (default: medium)")
+        preset_input = input(f"Enter preset (press Enter for default '{self.default_preset}'): ").strip().lower()
+        valid_presets = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"]
+        preset = preset_input if preset_input in valid_presets else self.default_preset
+        
+        # Ask if user wants to save these as defaults
+        if crf != self.default_crf or preset != self.default_preset:
+            save_defaults = input("\nSave these settings as defaults for future compressions? [y/N]: ").strip().lower()
+            if save_defaults in ['y', 'yes']:
+                self.default_crf = crf
+                self.default_preset = preset
+                self.save_config()
+                print("Settings saved as defaults.")
+        
         # Create compressed directory if it doesn't exist
         compressed_path = Path(self.compressed_directory)
         try:
@@ -591,68 +651,84 @@ class StreamRecorder:
             input("Press Enter to continue...")
             return
         
-        print(f"\nWill remux {len(selected_files)} file(s) to: {self.compressed_directory}")
+        print(f"\nWill compress {len(selected_files)} file(s) to: {self.compressed_directory}")
+        print(f"Quality settings: CRF={crf}, preset={preset}")
         
-        auto_delete = input("\nAutomatically delete original .ts files after successful remux? [y/N]: ").strip().lower()
+        auto_delete = input("\nAutomatically delete original .ts files after successful compression? [y/N]: ").strip().lower()
         auto_yes = auto_delete in ['y', 'yes']
         
         # Check for ffmpeg
-        if not remux_module.check_ffmpeg_installed():
+        if not compress_module.check_ffmpeg_installed():
             print("\n[ERROR] ffmpeg and ffprobe are required but not found on PATH")
             print("Install with: brew install ffmpeg (macOS) or apt-get install ffmpeg (Linux)")
             input("\nPress Enter to continue...")
             return
         
-        print("\nStarting remux process...\n")
+        print("\nStarting compression process...")
+        print("Press Ctrl+C at any time to interrupt (partial files will be cleaned up)\n")
         
-        stats = remux_module.RemuxStats()
+        stats = compress_module.CompressStats()
         stats.total_found = len(selected_files)
         
-        for ts_file in selected_files:
-            output_file = compressed_path / ts_file.with_suffix('.mp4').name
-            
-            # Check if already exists and valid
-            if remux_module.mp4_exists_and_valid(output_file):
-                print(f"[INFO] Skipping {ts_file.name} - valid MP4 already exists")
-                stats.skipped_existing += 1
-                continue
-            
-            print(f"[PROGRESS] Processing: {ts_file.name}")
-            print(f"[INFO] Remuxing {ts_file.name} -> {output_file.name}")
-            
-            if not remux_module.remux_file(ts_file, output_file, allow_video_only=False):
-                print(f"[ERROR] Remux failed for {ts_file.name}")
-                stats.failed += 1
-                stats.errors.append((ts_file.name, "Remux failed"))
-                continue
-            
-            print(f"[INFO] Verifying {output_file.name}")
-            success, message = remux_module.verify_remux(ts_file, output_file)
-            
-            if not success:
-                print(f"[ERROR] Verification failed for {output_file.name}: {message}")
-                stats.failed += 1
-                stats.errors.append((ts_file.name, message))
-                continue
-            
-            print(f"[SUCCESS] Successfully remuxed and verified: {output_file.name}")
-            stats.succeeded += 1
-            stats.processed += 1
-            
-            # Handle deletion
-            if auto_yes or remux_module.prompt_delete(ts_file, False):
-                try:
-                    ts_file.unlink()
-                    print(f"[INFO] Deleted original: {ts_file.name}")
-                    stats.deleted += 1
-                except Exception as e:
-                    print(f"[WARNING] Failed to delete {ts_file.name}: {e}")
-            else:
-                print(f"[INFO] Kept original: {ts_file.name}")
+        try:
+            for ts_file in selected_files:
+                if compress_module.interrupted:
+                    print("\n[WARNING] Processing interrupted by user")
+                    break
+                
+                output_file = compressed_path / ts_file.with_suffix('.mp4').name
+                
+                # Check if already exists and valid
+                if compress_module.mp4_exists_and_valid(output_file):
+                    print(f"[INFO] Skipping {ts_file.name} - valid MP4 already exists")
+                    stats.skipped_existing += 1
+                    continue
+                
+                print(f"[PROGRESS] Processing: {ts_file.name}")
+                print(f"[INFO] Compressing {ts_file.name} -> {output_file.name}")
+                print(f"[INFO] Using CRF={crf}, preset={preset}")
+                
+                if not compress_module.compress_file(ts_file, output_file, allow_video_only=False, crf=crf, preset=preset):
+                    if compress_module.interrupted:
+                        print("\n[WARNING] Compression interrupted")
+                        break
+                    print(f"[ERROR] Compression failed for {ts_file.name}")
+                    stats.failed += 1
+                    stats.errors.append((ts_file.name, "Compression failed"))
+                    continue
+                
+                print(f"[INFO] Verifying {output_file.name}")
+                success, message = compress_module.verify_compression(ts_file, output_file)
+                
+                if not success:
+                    print(f"[ERROR] Verification failed for {output_file.name}: {message}")
+                    stats.failed += 1
+                    stats.errors.append((ts_file.name, message))
+                    continue
+                
+                print(f"[SUCCESS] Successfully compressed and verified: {output_file.name}")
+                stats.succeeded += 1
+                stats.processed += 1
+                
+                # Handle deletion
+                if auto_yes or compress_module.prompt_delete(ts_file, False):
+                    try:
+                        ts_file.unlink()
+                        print(f"[INFO] Deleted original: {ts_file.name}")
+                        stats.deleted += 1
+                    except Exception as e:
+                        print(f"[WARNING] Failed to delete {ts_file.name}: {e}")
+                else:
+                    print(f"[INFO] Kept original: {ts_file.name}")
+                
+                print()  # Blank line between files
+        
+        except KeyboardInterrupt:
+            print("\n[WARNING] Operation cancelled by user")
         
         # Print summary
         print("\n" + "="*60)
-        print("Remux Summary")
+        print("Compression Summary")
         print("="*60)
         print(f"Total .ts files found: {stats.total_found}")
         print(f"Skipped (valid MP4 exists): {stats.skipped_existing}")
@@ -677,9 +753,9 @@ class StreamRecorder:
             print("1. Add Streamer")
             print("2. Remove Streamer")
             print("3. List Monitored Streamers")
-            print("4. Back to Main Menu")
+            print("q. Back to Main Menu")
 
-            choice = input("Enter your choice (1-4): ")
+            choice = input("Enter your choice (1-3, q): ").strip().lower()
 
             self.clear_screen()
 
@@ -692,7 +768,7 @@ class StreamRecorder:
                 for streamer in self.streamers:
                     print(streamer)
                 input("Press Enter to continue...")
-            elif choice == '4':
+            elif choice == 'q':
                 break
             else:
                 print("Invalid choice. Please try again.")
@@ -707,11 +783,11 @@ class StreamRecorder:
             print("\n--- Twitch Stream Recorder ---")
             print("1. Manage Streamers")
             print("2. Start Monitoring")
-            print("3. Remux Recordings to MP4")
+            print("3. Compress Recordings to MP4 (H.265)")
             print("4. Settings")
-            print("5. Exit")
+            print("q. Exit")
 
-            choice = input("Enter your choice (1-5): ")
+            choice = input("Enter your choice (1-4, q): ").strip().lower()
 
             # Clear screen after choice
             self.clear_screen()
@@ -721,10 +797,10 @@ class StreamRecorder:
             elif choice == '2':
                 self.start_monitoring()
             elif choice == '3':
-                self.remux_recordings()
+                self.compress_recordings()
             elif choice == '4':
                 self.change_settings()
-            elif choice == '5':
+            elif choice == 'q':
                 print("Exiting Twitch Stream Recorder.")
                 break
             else:
