@@ -558,10 +558,10 @@ class StreamRecorder:
                 print("Invalid choice. Please try again.")
                 input("Press Enter to continue...")
 
-    def compress_recordings(self):
+    def compress_recordings(self, dry_run=False):
         """Compress .ts recordings to .mp4 format with H.265"""
         from pathlib import Path
-        import src.remux_ts_to_mp4 as compress_module
+        import src.compression as compress_module
         
         # Find .ts files in the output directory
         output_path = Path(self.output_directory)
@@ -570,7 +570,8 @@ class StreamRecorder:
             input("Press Enter to continue...")
             return
         
-        ts_files = sorted(output_path.glob("*.ts"))
+        # Get all .ts files and filter out macOS resource fork files (._filename)
+        ts_files = sorted([f for f in output_path.glob("*.ts") if not f.name.startswith('._')])
         
         if not ts_files:
             print(f"No .ts files found in {self.output_directory}")
@@ -654,8 +655,11 @@ class StreamRecorder:
         print(f"\nWill compress {len(selected_files)} file(s) to: {self.compressed_directory}")
         print(f"Quality settings: CRF={crf}, preset={preset}")
         
-        auto_delete = input("\nAutomatically delete original .ts files after successful compression? [y/N]: ").strip().lower()
-        auto_yes = auto_delete in ['y', 'yes']
+        auto_delete = False
+        auto_yes = False
+        if not dry_run:
+            auto_delete = input("\nAutomatically delete original .ts files after successful compression? [y/N]: ").strip().lower()
+            auto_yes = auto_delete in ['y', 'yes']
         
         # Check for ffmpeg
         if not compress_module.check_ffmpeg_installed():
@@ -664,8 +668,12 @@ class StreamRecorder:
             input("\nPress Enter to continue...")
             return
         
-        print("\nStarting compression process...")
-        print("Press Ctrl+C at any time to interrupt (partial files will be cleaned up)\n")
+        if dry_run:
+            print("\n[DRY RUN MODE] - No files will be compressed or modified")
+            print("="*60)
+        else:
+            print("\nStarting compression process...")
+            print("Press Ctrl+C at any time to interrupt (partial files will be cleaned up)\n")
         
         stats = compress_module.CompressStats()
         stats.total_found = len(selected_files)
@@ -682,6 +690,21 @@ class StreamRecorder:
                 if compress_module.mp4_exists_and_valid(output_file):
                     print(f"[INFO] Skipping {ts_file.name} - valid MP4 already exists")
                     stats.skipped_existing += 1
+                    continue
+                
+                if dry_run:
+                    # Dry run mode - just show what would be done
+                    print(f"[DRY RUN] Would compress: {ts_file.name}")
+                    print(f"[DRY RUN]   Input:  {ts_file}")
+                    print(f"[DRY RUN]   Output: {output_file}")
+                    print(f"[DRY RUN]   Settings: CRF={crf}, preset={preset}")
+                    input_size = ts_file.stat().st_size / (1024 * 1024 * 1024)
+                    print(f"[DRY RUN]   Input size: {input_size:.2f} GB")
+                    if auto_yes:
+                        print(f"[DRY RUN]   Would delete original after compression")
+                    print()
+                    stats.processed += 1
+                    stats.succeeded += 1
                     continue
                 
                 print(f"[PROGRESS] Processing: {ts_file.name}")
@@ -728,14 +751,20 @@ class StreamRecorder:
         
         # Print summary
         print("\n" + "="*60)
-        print("Compression Summary")
+        if dry_run:
+            print("Dry Run Summary (No files were modified)")
+        else:
+            print("Compression Summary")
         print("="*60)
         print(f"Total .ts files found: {stats.total_found}")
         print(f"Skipped (valid MP4 exists): {stats.skipped_existing}")
-        print(f"Processed: {stats.processed}")
-        print(f"Succeeded: {stats.succeeded}")
-        print(f"Failed: {stats.failed}")
-        print(f"Originals deleted: {stats.deleted}")
+        if dry_run:
+            print(f"Would process: {stats.processed}")
+        else:
+            print(f"Processed: {stats.processed}")
+            print(f"Succeeded: {stats.succeeded}")
+            print(f"Failed: {stats.failed}")
+            print(f"Originals deleted: {stats.deleted}")
         
         if stats.errors:
             print("\nErrors:")
@@ -784,10 +813,11 @@ class StreamRecorder:
             print("1. Manage Streamers")
             print("2. Start Monitoring")
             print("3. Compress Recordings to MP4 (H.265)")
-            print("4. Settings")
+            print("4. Dry Run Compression (Preview)")
+            print("5. Settings")
             print("q. Exit")
 
-            choice = input("Enter your choice (1-4, q): ").strip().lower()
+            choice = input("Enter your choice (1-5, q): ").strip().lower()
 
             # Clear screen after choice
             self.clear_screen()
@@ -799,6 +829,8 @@ class StreamRecorder:
             elif choice == '3':
                 self.compress_recordings()
             elif choice == '4':
+                self.compress_recordings(dry_run=True)
+            elif choice == '5':
                 self.change_settings()
             elif choice == 'q':
                 print("Exiting Twitch Stream Recorder.")
