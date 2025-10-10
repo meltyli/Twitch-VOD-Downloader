@@ -30,6 +30,14 @@ class StreamRecorder:
         self.stop_all_recordings = threading.Event()
         self.recordings_path = 'recordings'  # Default recordings directory
         self.console = Console()
+        self.monitoring_interrupted = False  # Flag for Ctrl+C during monitoring
+
+    def monitoring_signal_handler(self, signum, frame):
+        """Handle Ctrl+C during monitoring to gracefully stop and return to menu"""
+        if not self.monitoring_interrupted:
+            self.monitoring_interrupted = True
+            self.console.print("\n[bold yellow]Interrupt received. Stopping all monitoring and recordings...[/bold yellow]")
+            self.stop_all_recordings.set()
 
     def clear_screen(self):
         """Clear the terminal screen across different platforms"""
@@ -244,62 +252,55 @@ class StreamRecorder:
     def monitor_multiple_streamers(self, selected_streamers, check_interval):
         """Monitor and record multiple streamers concurrently with progress bars"""
         self.stop_all_recordings.clear()
+        self.monitoring_interrupted = False
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.completed:.1f}MB"),
-            console=self.console
-        ) as progress:
+        # Set up signal handler for Ctrl+C
+        original_sigint_handler = signal.signal(signal.SIGINT, self.monitoring_signal_handler)
 
-            # Create progress tasks for each streamer
-            tasks = {}
-            for streamer in selected_streamers:
-                task_id = progress.add_task(f"[cyan]{streamer}: Initializing...", total=None)
-                tasks[streamer] = task_id
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.completed:.1f}MB"),
+                console=self.console
+            ) as progress:
 
-            # Start monitoring threads for each streamer
-            threads = []
-            for streamer in selected_streamers:
-                thread = threading.Thread(
-                    target=self.monitor_and_record_streamer,
-                    args=(streamer, check_interval, progress, tasks[streamer])
-                )
-                thread.daemon = True
-                thread.start()
-                threads.append(thread)
-                self.recording_threads[streamer] = thread
+                # Create progress tasks for each streamer
+                tasks = {}
+                for streamer in selected_streamers:
+                    task_id = progress.add_task(f"[cyan]{streamer}: Initializing...", total=None)
+                    tasks[streamer] = task_id
 
-            # Wait for 'q' input to stop all monitoring/recordings
-            self.console.print("\n[bold yellow]Press 'q' and Enter to stop all monitoring and save any active recordings[/bold yellow]")
+                # Start monitoring threads for each streamer
+                threads = []
+                for streamer in selected_streamers:
+                    thread = threading.Thread(
+                        target=self.monitor_and_record_streamer,
+                        args=(streamer, check_interval, progress, tasks[streamer])
+                    )
+                    thread.daemon = True
+                    thread.start()
+                    threads.append(thread)
+                    self.recording_threads[streamer] = thread
 
-            # Monitor for 'q' input in a non-blocking way
-            input_thread_stop = threading.Event()
+                # Show instructions
+                self.console.print("\n[bold yellow]Press Ctrl+C to stop all monitoring and save any active recordings[/bold yellow]")
 
-            def wait_for_quit():
-                while not input_thread_stop.is_set():
-                    try:
-                        user_input = input()
-                        if user_input.lower() == 'q':
-                            self.console.print("\n[bold red]Stopping all monitoring and recordings...[/bold red]")
-                            self.stop_all_recordings.set()
-                            break
-                    except:
-                        break
+                # Wait for all threads to complete or stop signal
+                for thread in threads:
+                    thread.join()
 
-            input_thread = threading.Thread(target=wait_for_quit)
-            input_thread.daemon = True
-            input_thread.start()
+                if self.monitoring_interrupted:
+                    self.console.print("\n[bold green]All monitoring stopped. Returning to menu...[/bold green]")
+                else:
+                    self.console.print("\n[bold green]All monitoring completed[/bold green]")
+                
+                self.recording_threads.clear()
 
-            # Wait for all threads to complete or stop signal
-            for thread in threads:
-                thread.join()
-
-            input_thread_stop.set()
-
-            self.console.print("\n[bold green]All monitoring stopped[/bold green]")
-            self.recording_threads.clear()
+        finally:
+            # Restore original signal handler
+            signal.signal(signal.SIGINT, original_sigint_handler)
 
     def stop_recording(self):
         """Stop the current recording"""
@@ -563,6 +564,9 @@ class StreamRecorder:
         """Compress .ts recordings to .mp4 format with H.265"""
         from pathlib import Path
         import src.compression as compress_module
+        
+        # Reset the interrupted flag before starting
+        compress_module.interrupted = False
         
         # Find .ts files in the output directory
         output_path = Path(self.output_directory)

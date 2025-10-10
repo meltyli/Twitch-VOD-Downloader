@@ -837,6 +837,11 @@ def print_summary(stats: CompressStats, logger: CompressLogger):
 
 def main():
     """Main entry point"""
+    global interrupted
+    
+    # Reset interrupted flag at start of each run
+    interrupted = False
+    
     # Set up signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
