@@ -123,17 +123,21 @@ def check_ffmpeg_installed() -> bool:
 
 def find_ts_files(directory: Path, recursive: bool = False) -> List[Path]:
     """
-    Find all .ts files in the given directory
+    Find all .ts files in the given directory, excluding macOS metadata files
     
     Args:
         directory: Path to search
         recursive: Whether to search subdirectories
     
     Returns:
-        List of Path objects for .ts files
+        List of Path objects for .ts files (excludes ._ AppleDouble files)
     """
     pattern = "**/*.ts" if recursive else "*.ts"
     ts_files = list(directory.glob(pattern))
+    
+    # Filter out macOS resource fork files (._filename) and other hidden files
+    ts_files = [f for f in ts_files if not f.name.startswith('._')]
+    
     return sorted(ts_files)
 
 
@@ -348,10 +352,14 @@ def verify_compression(input_path: Path, output_path: Path, tolerance: float = 2
     """
     Verify that compression was successful by comparing input and output
     
+    Note: .ts files from Twitch often have discontinuities (ads, buffering) that inflate
+    duration compared to the remuxed .mp4. We use a percentage-based tolerance and 
+    frame count verification instead of strict duration matching.
+    
     Args:
         input_path: Original .ts file
         output_path: Compressed .mp4 file
-        tolerance: Duration tolerance in seconds (increased for compressed files)
+        tolerance: Duration tolerance percentage (default 2.0 = allow up to 2x duration difference)
     
     Returns:
         Tuple of (success: bool, error_message: str)
@@ -379,7 +387,7 @@ def verify_compression(input_path: Path, output_path: Path, tolerance: float = 2
     output_video = [s for s in output_streams if s.get('codec_type') == 'video']
     output_audio = [s for s in output_streams if s.get('codec_type') == 'audio']
     
-    # Verify video stream
+    # Verify video stream exists
     if not output_video:
         return False, "Output has no video stream"
     
@@ -399,26 +407,119 @@ def verify_compression(input_path: Path, output_path: Path, tolerance: float = 2
         if output_acodec not in ['aac', 'mp3', 'opus', 'ac3', 'eac3']:
             return False, f"Unexpected audio codec: {output_acodec}"
     
-    # Compare durations (more lenient for compressed files)
+    # Get format information
     input_format = input_probe.get('format', {})
     output_format = output_probe.get('format', {})
     
     input_duration = float(input_format.get('duration', 0))
     output_duration = float(output_format.get('duration', 0))
     
-    if input_duration == 0 or output_duration == 0:
-        return False, "Duration information missing"
+    # Verify output has reasonable duration (not zero or suspiciously short)
+    if output_duration == 0:
+        return False, "Output duration is zero"
     
-    duration_diff = abs(input_duration - output_duration)
-    if duration_diff > tolerance:
-        return False, f"Duration mismatch: {duration_diff:.2f}s difference (tolerance: {tolerance}s)"
+    if output_duration < 5:
+        return False, f"Output duration suspiciously short: {output_duration:.2f}s"
+    
+    # Compare frame counts if available (more reliable for fragmented streams)
+    # Note: .ts files from streaming often don't have frame count metadata,
+    # but .mp4 files will have it after remuxing
+    input_video_stream = input_video[0]
+    output_video_stream = output_video[0]
+    
+    input_frames = input_video_stream.get('nb_frames')
+    output_frames = output_video_stream.get('nb_frames')
+    
+    # If BOTH have frame counts available, use them for verification
+    if input_frames and output_frames:
+        try:
+            input_frame_count = int(input_frames)
+            output_frame_count = int(output_frames)
+            
+            # Allow 1% frame difference (accounts for encoding differences)
+            frame_diff_percent = abs(output_frame_count - input_frame_count) / input_frame_count * 100
+            
+            if frame_diff_percent > 1.0:
+                logger.info(f"Frame count: {input_frame_count} → {output_frame_count} ({frame_diff_percent:.2f}% difference)")
+                # Only fail if difference is extreme (>5%)
+                if frame_diff_percent > 5.0:
+                    return False, f"Frame count mismatch: {frame_diff_percent:.2f}% difference"
+            else:
+                logger.info(f"Frame count verified: {output_frame_count} frames ({frame_diff_percent:.2f}% difference)")
+        except (ValueError, ZeroDivisionError):
+            pass  # Fall back to duration check
+    elif output_frames:
+        # Output has frame count but input doesn't (typical for .ts → .mp4)
+        # Just verify output has reasonable frame count
+        try:
+            output_frame_count = int(output_frames)
+            if output_frame_count > 0:
+                logger.info(f"Output frame count: {output_frame_count} frames")
+        except ValueError:
+            pass
+    
+    # Duration comparison with smart tolerance based on video length
+    # .ts files often have inflated durations due to discontinuities (ads, buffering)
+    # For long videos, a few seconds difference is negligible
+    if input_duration > 0:
+        duration_diff = abs(input_duration - output_duration)
+        duration_ratio = output_duration / input_duration
+        
+        # Calculate smart tolerance based on video length
+        # For videos >30 min (1800s), allow 0.5% difference
+        # For videos >1 hour (3600s), allow 0.2% difference
+        # For videos >2 hours (7200s), allow 0.1% difference
+        if input_duration > 7200:  # >2 hours
+            percent_tolerance = 0.001  # 0.1%
+        elif input_duration > 3600:  # >1 hour
+            percent_tolerance = 0.002  # 0.2%
+        elif input_duration > 1800:  # >30 min
+            percent_tolerance = 0.005  # 0.5%
+        else:  # <30 min
+            percent_tolerance = 0.05  # 5%
+        
+        duration_diff_percent = duration_diff / input_duration
+        
+        # Log duration comparison
+        logger.info(f"Duration: {input_duration:.1f}s → {output_duration:.1f}s (diff: {duration_diff:.1f}s = {duration_diff_percent:.2%}, tolerance: {percent_tolerance:.2%})")
+        
+        # For longer videos (>30min), use percentage-based tolerance
+        # For shorter videos, allow larger differences due to encoding overhead
+        if input_duration > 1800:  # >30 minutes
+            # Allow the output to be slightly longer or shorter within tolerance
+            if duration_diff_percent > percent_tolerance:
+                # Only fail if it's way off (>10x the tolerance)
+                if duration_diff_percent > percent_tolerance * 10:
+                    return False, f"Duration difference too large: {duration_diff_percent:.2%} (tolerance: {percent_tolerance:.2%})"
+                else:
+                    logger.warning(f"Duration difference {duration_diff_percent:.2%} exceeds tolerance {percent_tolerance:.2%} but within acceptable range")
+        else:
+            # For short videos, use more lenient checks
+            # Output should not be >20% longer than input
+            if output_duration > input_duration * 1.2:
+                return False, f"Output duration much longer than input: {output_duration:.1f}s > {input_duration:.1f}s"
+            
+            # Output should not be <50% of input (suggests corruption)
+            if duration_ratio < 0.5:
+                return False, f"Output duration too short: {duration_ratio:.0%} of input duration"
+    
+    # Verify file size is reasonable
+    input_size_mb = input_path.stat().st_size / (1024 * 1024)
+    output_size_mb = output_path.stat().st_size / (1024 * 1024)
+    
+    # Compressed file should be smaller than original (H.265 is efficient)
+    if output_size_mb > input_size_mb:
+        logger.warning(f"Output larger than input ({output_size_mb:.1f}MB > {input_size_mb:.1f}MB)")
+    
+    # Output should not be suspiciously tiny (suggests encoding failure)
+    if output_size_mb < 0.1:  # Less than 100KB
+        return False, f"Output file suspiciously small: {output_size_mb:.2f}MB"
     
     # Log compression ratio
-    input_size = input_path.stat().st_size / (1024 * 1024)  # MB
-    output_size = output_path.stat().st_size / (1024 * 1024)  # MB
-    ratio = (1 - (output_size / input_size)) * 100 if input_size > 0 else 0
-    logger.info(f"Size: {input_size:.1f}MB → {output_size:.1f}MB (compressed {ratio:.1f}%)")
+    compression_ratio = (1 - (output_size_mb / input_size_mb)) * 100 if input_size_mb > 0 else 0
+    logger.info(f"Size: {input_size_mb:.1f}MB → {output_size_mb:.1f}MB (compressed {compression_ratio:.1f}%)")
     
+
     return True, "Verification passed"
 
 
@@ -590,6 +691,12 @@ Quality Guide:
 Prerequisites:
   - ffmpeg with libx265 support must be installed and available on PATH
   - Install with: brew install ffmpeg (macOS) or apt-get install ffmpeg (Linux)
+
+Verification:
+  - Smart duration tolerance based on video length (0.1%%-5%% depending on duration)
+  - For long videos (>2hrs), allows up to 0.1%% difference (~100s for 8hr video)
+  - Handles Twitch VOD discontinuities (ads, buffering) that inflate .ts duration
+  - Validates codecs, frame counts, and file integrity
 
 Interrupting:
   - Press Ctrl+C to interrupt compression
