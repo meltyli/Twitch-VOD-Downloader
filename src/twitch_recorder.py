@@ -736,7 +736,7 @@ class StreamRecorder:
                 stats.processed += 1
                 
                 # Handle deletion
-                if auto_yes or compress_module.prompt_delete(ts_file, False):
+                if auto_yes:
                     try:
                         ts_file.unlink()
                         print(f"[INFO] Deleted original: {ts_file.name}")
