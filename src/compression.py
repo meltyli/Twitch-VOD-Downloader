@@ -24,11 +24,12 @@ from rich.table import Table
 interrupted = False
 current_process = None
 current_output_file = None
+current_temp_file = None  # Track temporary remuxed file for cleanup
 
 
 def signal_handler(signum, frame):
     """Handle interrupt signals for graceful shutdown"""
-    global interrupted, current_process, current_output_file
+    global interrupted, current_process, current_output_file, current_temp_file
     interrupted = True
     logger.warning("\n\nInterrupt received. Cleaning up...")
     
@@ -42,6 +43,15 @@ def signal_handler(signum, frame):
             except:
                 pass
     
+    # Clean up temporary remuxed file
+    if current_temp_file and current_temp_file.exists():
+        try:
+            current_temp_file.unlink()
+            logger.info(f"Deleted temporary remuxed file: {current_temp_file.name}")
+        except Exception as e:
+            logger.error(f"Failed to delete temp file: {e}")
+    
+    # Clean up partial output file
     if current_output_file and current_output_file.exists():
         try:
             current_output_file.unlink()
@@ -231,9 +241,106 @@ def probe_file(file_path: Path) -> Optional[Dict]:
         return None
 
 
+def remux_ts_to_mp4(input_path: Path, output_path: Path) -> bool:
+    """
+    Remux .ts file to .mp4 without re-encoding (fast, lossless container change)
+    
+    This step is important because:
+    - Twitch .ts files have discontinuities (ads, buffering) that can cause encoding issues
+    - MP4 container is more reliable for subsequent H.265 encoding
+    - Normalizes timestamps and handles fragmented streams better
+    
+    Args:
+        input_path: Source .ts file
+        output_path: Temporary .mp4 file (will be used for compression)
+    
+    Returns:
+        True if remux succeeded, False otherwise
+    """
+    global interrupted, current_process, current_temp_file
+    
+    if interrupted:
+        return False
+    
+    logger.info(f"Remuxing {input_path.name} to temporary MP4 (fast, no re-encoding)...")
+    
+    # Remux command - just copy streams without re-encoding
+    cmd = [
+        "ffmpeg",
+        "-i", str(input_path),
+        "-c", "copy",  # Copy all streams without re-encoding
+        "-movflags", "+faststart",
+        "-y",  # Overwrite if exists
+        str(output_path)
+    ]
+    
+    try:
+        current_temp_file = output_path
+        current_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+        
+        # Monitor for completion or interruption
+        stderr_lines = []
+        for line in current_process.stderr:
+            if interrupted:
+                current_process.terminate()
+                break
+            stderr_lines.append(line)
+            if "time=" in line.lower():
+                logger.progress(f"  Remux: {line.strip()}")
+        
+        current_process.wait()
+        
+        if interrupted:
+            if output_path.exists():
+                output_path.unlink()
+                logger.info(f"Deleted partial remux file: {output_path.name}")
+            return False
+        
+        if current_process.returncode != 0:
+            error_msg = ''.join(stderr_lines)
+            logger.error(f"Remux failed for {input_path.name}:")
+            logger.error(error_msg)
+            if output_path.exists():
+                output_path.unlink()
+            return False
+        
+        logger.success(f"Remux complete: {output_path.name}")
+        current_process = None
+        # Don't clear current_temp_file yet - need it for cleanup if compression fails
+        return True
+        
+    except KeyboardInterrupt:
+        interrupted = True
+        if current_process:
+            current_process.terminate()
+            try:
+                current_process.wait(timeout=5)
+            except:
+                current_process.kill()
+        if output_path.exists():
+            output_path.unlink()
+            logger.info(f"Deleted partial remux file: {output_path.name}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during remux of {input_path.name}: {e}")
+        if output_path.exists():
+            output_path.unlink()
+        return False
+
+
 def compress_file(input_path: Path, output_path: Path, allow_video_only: bool = False, crf: int = 24, preset: str = "faster") -> bool:
     """
     Compress .ts file to .mp4 using ffmpeg with H.265/HEVC
+    
+    Process:
+    1. Remux .ts to temporary .mp4 (normalizes container, handles discontinuities)
+    2. Compress remuxed .mp4 to final H.265 output
+    3. Clean up temporary remuxed file
     
     Args:
         input_path: Source .ts file
@@ -245,15 +352,27 @@ def compress_file(input_path: Path, output_path: Path, allow_video_only: bool = 
     Returns:
         True if compression succeeded, False otherwise
     """
-    global interrupted, current_process, current_output_file
+    global interrupted, current_process, current_output_file, current_temp_file
     
     if interrupted:
         return False
     
-    # First probe the input to check streams
-    probe_data = probe_file(input_path)
+    # Step 1: Remux .ts to temporary .mp4 first
+    # This normalizes the container and handles Twitch stream discontinuities
+    temp_remux_path = output_path.with_suffix('.tmp.mp4')
+    
+    if not remux_ts_to_mp4(input_path, temp_remux_path):
+        logger.error(f"Failed to remux {input_path.name}")
+        # Cleanup already handled by remux_ts_to_mp4
+        return False
+    
+    # Step 2: Probe the remuxed file to check streams
+    probe_data = probe_file(temp_remux_path)
     if not probe_data:
-        logger.error(f"Cannot probe input file: {input_path.name}")
+        logger.error(f"Cannot probe remuxed file: {temp_remux_path.name}")
+        temp_remux_path.unlink()
+        logger.info(f"Deleted temporary remux file: {temp_remux_path.name}")
+        current_temp_file = None
         return False
     
     streams = probe_data.get('streams', [])
@@ -266,9 +385,12 @@ def compress_file(input_path: Path, output_path: Path, allow_video_only: bool = 
     
     if not audio_streams and not allow_video_only:
         logger.error(f"No audio stream found in {input_path.name}. Use --allow-video-only to proceed anyway.")
+        temp_remux_path.unlink()
+        logger.info(f"Deleted temporary remux file: {temp_remux_path.name}")
+        current_temp_file = None
         return False
     
-    # Detect hardware acceleration availability (macOS)
+    # Step 3: Detect hardware acceleration availability (macOS)
     use_hardware = False
     if platform.system() == 'Darwin':  # macOS
         try:
@@ -285,10 +407,12 @@ def compress_file(input_path: Path, output_path: Path, allow_video_only: bool = 
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
     
-    # Build ffmpeg command for H.265 compression
+    # Step 4: Build ffmpeg command for H.265 compression
+    # Compress from the remuxed MP4, not the original .ts
+    logger.info(f"Compressing remuxed file to H.265...")
     cmd = [
         "ffmpeg",
-        "-i", str(input_path),
+        "-i", str(temp_remux_path),  # Use remuxed file as input
         "-map", "0:v:0",  # Map first video stream
     ]
     
@@ -349,18 +473,35 @@ def compress_file(input_path: Path, output_path: Path, allow_video_only: bool = 
         if interrupted:
             if output_path.exists():
                 output_path.unlink()
+                logger.info(f"Deleted partial compressed file: {output_path.name}")
+            if temp_remux_path.exists():
+                temp_remux_path.unlink()
+                logger.info(f"Deleted temporary remux file: {temp_remux_path.name}")
+            current_temp_file = None
             return False
         
         if current_process.returncode != 0:
             error_msg = ''.join(stderr_lines)
-            logger.error(f"ffmpeg failed for {input_path.name}:")
+            logger.error(f"ffmpeg compression failed for {input_path.name}:")
             logger.error(error_msg)
             if output_path.exists():
-                output_path.unlink()  # Clean up partial file
+                output_path.unlink()
+                logger.info(f"Deleted partial compressed file: {output_path.name}")
+            if temp_remux_path.exists():
+                temp_remux_path.unlink()
+                logger.info(f"Deleted temporary remux file: {temp_remux_path.name}")
+            current_temp_file = None
             return False
+        
+        # Compression succeeded! Clean up temp remux file
+        logger.success(f"Compression complete")
+        if temp_remux_path.exists():
+            temp_remux_path.unlink()
+            logger.info(f"Deleted temporary remux file: {temp_remux_path.name}")
         
         current_process = None
         current_output_file = None
+        current_temp_file = None
         return True
         
     except KeyboardInterrupt:
@@ -373,11 +514,21 @@ def compress_file(input_path: Path, output_path: Path, allow_video_only: bool = 
                 current_process.kill()
         if output_path.exists():
             output_path.unlink()
+            logger.info(f"Deleted partial compressed file: {output_path.name}")
+        if temp_remux_path.exists():
+            temp_remux_path.unlink()
+            logger.info(f"Deleted temporary remux file: {temp_remux_path.name}")
+        current_temp_file = None
         raise
     except Exception as e:
         logger.error(f"Unexpected error during compression of {input_path.name}: {e}")
         if output_path.exists():
-            output_path.unlink()  # Clean up partial file
+            output_path.unlink()
+            logger.info(f"Deleted partial compressed file: {output_path.name}")
+        if temp_remux_path.exists():
+            temp_remux_path.unlink()
+            logger.info(f"Deleted temporary remux file: {temp_remux_path.name}")
+        current_temp_file = None
         return False
 
 
