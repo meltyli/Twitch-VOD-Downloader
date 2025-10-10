@@ -20,8 +20,8 @@ class StreamRecorder:
         self.output_directory = self.config.get('output_directory', 'recordings')
         self.compressed_directory = self.config.get('compressed_directory', os.path.join(self.output_directory, 'compressed'))
         self.default_check_interval = self.config.get('default_check_interval', 2)
-        self.default_crf = self.config.get('default_crf', 28)
-        self.default_preset = self.config.get('default_preset', 'medium')
+        self.default_crf = self.config.get('default_crf', 24)
+        self.default_preset = self.config.get('default_preset', 'faster')
         self.current_process = None  # Keep for backward compatibility with old methods
         self.active_recordings = {}  # Dictionary of {streamer_name: process}
         self.recording_threads = {}  # Dictionary of {streamer_name: thread}
@@ -50,9 +50,9 @@ class StreamRecorder:
                         config['compressed_directory'] = os.path.join(config.get('output_directory', 'recordings'), 'compressed')
                     # Add compression defaults if not present
                     if 'default_crf' not in config:
-                        config['default_crf'] = 28
+                        config['default_crf'] = 24
                     if 'default_preset' not in config:
-                        config['default_preset'] = 'medium'
+                        config['default_preset'] = 'faster'
                     return config
             # Return default configuration
             return {
@@ -60,8 +60,8 @@ class StreamRecorder:
                 'output_directory': 'recordings',
                 'compressed_directory': 'recordings/compressed',
                 'default_check_interval': 2,
-                'default_crf': 28,
-                'default_preset': 'medium'
+                'default_crf': 24,
+                'default_preset': 'faster'
             }
         except Exception as e:
             print(f"Error loading config: {e}")
@@ -70,8 +70,8 @@ class StreamRecorder:
                 'output_directory': 'recordings',
                 'compressed_directory': 'recordings/compressed',
                 'default_check_interval': 2,
-                'default_crf': 28,
-                'default_preset': 'medium'
+                'default_crf': 24,
+                'default_preset': 'faster'
             }
 
     def save_config(self):
@@ -526,7 +526,7 @@ class StreamRecorder:
             elif choice == '4':
                 try:
                     print("\nCRF (Constant Rate Factor): 0-51 (lower = better quality, larger file)")
-                    print("Recommended: 23-28")
+                    print("Recommended: 20-28 (default: 24, optimized for streaming content)")
                     new_crf = input(f"Enter new default CRF (current: {self.default_crf}): ").strip()
                     if new_crf:
                         crf = int(new_crf)
@@ -542,7 +542,8 @@ class StreamRecorder:
                     input("Press Enter to continue...")
             elif choice == '5':
                 print("\nAvailable presets: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow")
-                print("Slower = better compression but longer encoding time")
+                print("Faster presets = quicker encoding (recommended: 'faster' for good balance)")
+                print("Slower presets = better compression but longer encoding time")
                 new_preset = input(f"Enter new default preset (current: {self.default_preset}): ").strip().lower()
                 valid_presets = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"]
                 if new_preset in valid_presets:
@@ -617,7 +618,7 @@ class StreamRecorder:
         # Get compression settings
         print("\nCompression Quality Settings:")
         print("CRF (Constant Rate Factor): 0-51 (lower = better quality, larger file)")
-        print("  Recommended: 23-28 (default: 28)")
+        print("  Recommended: 20-28 (default: 24, optimized for streaming content)")
         crf_input = input(f"Enter CRF value (press Enter for default {self.default_crf}): ").strip()
         try:
             crf = int(crf_input) if crf_input else self.default_crf
@@ -629,7 +630,8 @@ class StreamRecorder:
             crf = self.default_crf
         
         print("\nPreset (encoding speed): ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow")
-        print("  Slower = better compression but longer encoding time (default: medium)")
+        print("  Faster presets = quicker encoding (default: 'faster' for good balance)")
+        print("  Slower presets = better compression but longer encoding time")
         preset_input = input(f"Enter preset (press Enter for default '{self.default_preset}'): ").strip().lower()
         valid_presets = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"]
         preset = preset_input if preset_input in valid_presets else self.default_preset
