@@ -14,6 +14,7 @@ import sys
 import signal
 import platform
 import threading
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from rich.console import Console
@@ -285,15 +286,24 @@ def remux_ts_to_mp4(input_path: Path, output_path: Path) -> bool:
         
         # Monitor for completion or interruption
         stderr_lines = []
+        last_update_time = 0
         for line in current_process.stderr:
             if interrupted:
                 current_process.terminate()
                 break
             stderr_lines.append(line)
             if "time=" in line.lower():
-                logger.progress(f"  Remux: {line.strip()}")
+                # Only update once per second to avoid spam
+                current_time = time.time()
+                if current_time - last_update_time >= 1.0:
+                    # Use carriage return to update same line
+                    print(f"\r  Remux: {line.strip()}", end='', flush=True)
+                    last_update_time = current_time
         
         current_process.wait()
+        
+        # Print newline after progress updates
+        print()
         
         if interrupted:
             if output_path.exists():
@@ -458,6 +468,7 @@ def compress_file(input_path: Path, output_path: Path, allow_video_only: bool = 
         
         # Monitor the process and show progress
         stderr_lines = []
+        last_update_time = 0
         for line in current_process.stderr:
             if interrupted:
                 current_process.terminate()
@@ -465,10 +476,17 @@ def compress_file(input_path: Path, output_path: Path, allow_video_only: bool = 
             stderr_lines.append(line)
             # Show progress if available (ffmpeg outputs to stderr)
             if "time=" in line.lower():
-                # Extract and display progress information
-                logger.progress(f"  {line.strip()}")
+                # Only update once per second to avoid spam
+                current_time = time.time()
+                if current_time - last_update_time >= 1.0:
+                    # Use carriage return to update same line
+                    print(f"\r  {line.strip()}", end='', flush=True)
+                    last_update_time = current_time
         
         current_process.wait()
+        
+        # Print newline after progress updates
+        print()
         
         if interrupted:
             if output_path.exists():
@@ -994,6 +1012,7 @@ Interrupting:
         logger.warning("DRY RUN MODE - No files will be modified")
     
     logger.info("Press Ctrl+C at any time to interrupt and clean up partial files")
+    logger.warning("Keyboard input is disabled during compression - only Ctrl+C will stop the process")
     print()  # Blank line for readability
     
     # Process each file

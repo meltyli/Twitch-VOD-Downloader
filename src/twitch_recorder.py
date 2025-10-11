@@ -256,6 +256,16 @@ class StreamRecorder:
 
         # Set up signal handler for Ctrl+C
         original_sigint_handler = signal.signal(signal.SIGINT, self.monitoring_signal_handler)
+        
+        # Disable terminal input to prevent interference with Rich Progress display
+        import termios
+        import sys
+        old_settings = None
+        try:
+            # Save current terminal settings (Unix/macOS only)
+            old_settings = termios.tcgetattr(sys.stdin)
+        except:
+            pass  # Windows or unavailable termios
 
         try:
             with Progress(
@@ -263,7 +273,8 @@ class StreamRecorder:
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TextColumn("[progress.percentage]{task.completed:.1f}MB"),
-                console=self.console
+                console=self.console,
+                refresh_per_second=2  # Reduce update frequency to avoid flickering
             ) as progress:
 
                 # Create progress tasks for each streamer
@@ -299,6 +310,13 @@ class StreamRecorder:
                 self.recording_threads.clear()
 
         finally:
+            # Restore terminal settings
+            if old_settings:
+                try:
+                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+                except:
+                    pass
+            
             # Restore original signal handler
             signal.signal(signal.SIGINT, original_sigint_handler)
 
@@ -679,7 +697,8 @@ class StreamRecorder:
             print("="*60)
         else:
             print("\nStarting compression process...")
-            print("Press Ctrl+C at any time to interrupt (partial files will be cleaned up)\n")
+            print("[bold yellow]Press Ctrl+C at any time to interrupt (partial files will be cleaned up)[/bold yellow]")
+            print("[bold yellow]Keyboard input is disabled during compression - only Ctrl+C will stop the process[/bold yellow]\n")
         
         stats = compress_module.CompressStats()
         stats.total_found = len(selected_files)
