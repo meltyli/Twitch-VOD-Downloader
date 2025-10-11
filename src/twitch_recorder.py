@@ -256,16 +256,6 @@ class StreamRecorder:
 
         # Set up signal handler for Ctrl+C
         original_sigint_handler = signal.signal(signal.SIGINT, self.monitoring_signal_handler)
-        
-        # Disable terminal input to prevent interference with Rich Progress display
-        import termios
-        import sys
-        old_settings = None
-        try:
-            # Save current terminal settings (Unix/macOS only)
-            old_settings = termios.tcgetattr(sys.stdin)
-        except:
-            pass  # Windows or unavailable termios
 
         try:
             with Progress(
@@ -273,8 +263,7 @@ class StreamRecorder:
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TextColumn("[progress.percentage]{task.completed:.1f}MB"),
-                console=self.console,
-                refresh_per_second=2  # Reduce update frequency to avoid flickering
+                console=self.console
             ) as progress:
 
                 # Create progress tasks for each streamer
@@ -310,13 +299,6 @@ class StreamRecorder:
                 self.recording_threads.clear()
 
         finally:
-            # Restore terminal settings
-            if old_settings:
-                try:
-                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-                except:
-                    pass
-            
             # Restore original signal handler
             signal.signal(signal.SIGINT, original_sigint_handler)
 

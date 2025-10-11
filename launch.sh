@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # Create virtual environment if it doesn't exist
-if [ ! -d "myenv" ]; then
-    echo "Virtual environment not found. Creating myenv..."
-    python3 -m venv myenv
-    source myenv/bin/activate
+if [ ! -d "pyenv" ]; then
+    echo "Virtual environment not found. Creating pyenv..."
+    python3 -m venv pyenv
+    source pyenv/bin/activate
     echo "Installing dependencies..."
     pip install -r requirements.txt
 else
-    source myenv/bin/activate
+    source pyenv/bin/activate
     echo "Installing/updating dependencies..."
     pip install -r requirements.txt
 fi
