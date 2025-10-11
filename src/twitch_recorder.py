@@ -457,24 +457,11 @@ class StreamRecorder:
             except ValueError:
                 print("Invalid input. Please enter valid numbers.")
 
-        # Get check interval
-        while True:
-            try:
-                interval_input = input(f"\nEnter check interval in minutes (press Enter for default {self.default_check_interval} minutes): ")
-
-                if interval_input == "":
-                    check_interval = self.default_check_interval
-                else:
-                    check_interval = float(interval_input)
-
-                if check_interval <= 0:
-                    print("Please enter a positive number.")
-                    continue
-                break
-            except ValueError:
-                print("Please enter a valid number.")
+        # Use default check interval from config
+        check_interval = self.default_check_interval
 
         print(f"\nStarting continuous monitoring for {len(selected_streamers)} streamer(s)")
+        print(f"Check interval: {check_interval} minutes (change in Settings menu if needed)")
         print("Streams will automatically record when live and resume monitoring after they end")
         print()
 
@@ -619,35 +606,9 @@ class StreamRecorder:
             input("Press Enter to continue...")
             return
         
-        # Get compression settings
-        print("\nCompression Quality Settings:")
-        print("CRF (Constant Rate Factor): 0-51 (lower = better quality, larger file)")
-        print("  Recommended: 20-28 (default: 24, optimized for streaming content)")
-        crf_input = input(f"Enter CRF value (press Enter for default {self.default_crf}): ").strip()
-        try:
-            crf = int(crf_input) if crf_input else self.default_crf
-            if not 0 <= crf <= 51:
-                print(f"CRF must be between 0 and 51. Using default {self.default_crf}.")
-                crf = self.default_crf
-        except ValueError:
-            print(f"Invalid CRF value. Using default {self.default_crf}.")
-            crf = self.default_crf
-        
-        print("\nPreset (encoding speed): ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow")
-        print("  Faster presets = quicker encoding (default: 'faster' for good balance)")
-        print("  Slower presets = better compression but longer encoding time")
-        preset_input = input(f"Enter preset (press Enter for default '{self.default_preset}'): ").strip().lower()
-        valid_presets = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"]
-        preset = preset_input if preset_input in valid_presets else self.default_preset
-        
-        # Ask if user wants to save these as defaults
-        if crf != self.default_crf or preset != self.default_preset:
-            save_defaults = input("\nSave these settings as defaults for future compressions? [y/N]: ").strip().lower()
-            if save_defaults in ['y', 'yes']:
-                self.default_crf = crf
-                self.default_preset = preset
-                self.save_config()
-                print("Settings saved as defaults.")
+        # Use default compression settings from config
+        crf = self.default_crf
+        preset = self.default_preset
         
         # Create compressed directory if it doesn't exist
         compressed_path = Path(self.compressed_directory)
@@ -659,7 +620,7 @@ class StreamRecorder:
             return
         
         print(f"\nWill compress {len(selected_files)} file(s) to: {self.compressed_directory}")
-        print(f"Quality settings: CRF={crf}, preset={preset}")
+        print(f"Quality settings: CRF={crf}, preset={preset} (change in Settings menu if needed)")
         
         auto_delete = False
         auto_yes = False
