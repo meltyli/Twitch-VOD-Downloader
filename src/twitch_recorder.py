@@ -640,8 +640,8 @@ class StreamRecorder:
             print("="*60)
         else:
             print("\nStarting compression process...")
-            print("[bold yellow]Press Ctrl+C at any time to interrupt (partial files will be cleaned up)[/bold yellow]")
-            print("[bold yellow]Keyboard input is disabled during compression - only Ctrl+C will stop the process[/bold yellow]\n")
+            self.console.print("[bold yellow]Press Ctrl+C at any time to interrupt (partial files will be cleaned up)[/bold yellow]")
+            self.console.print("[bold yellow]Keyboard input is disabled during compression - only Ctrl+C will stop the process[/bold yellow]\n")
         
         stats = compress_module.CompressStats()
         stats.total_found = len(selected_files)
@@ -658,6 +658,19 @@ class StreamRecorder:
                 if compress_module.mp4_exists_and_valid(output_file):
                     print(f"[INFO] Skipping {ts_file.name} - valid MP4 already exists")
                     stats.skipped_existing += 1
+                    
+                    # If user wants auto-delete, delete the original .ts file
+                    # since compression was already done previously
+                    if auto_yes:
+                        try:
+                            ts_file.unlink()
+                            print(f"[INFO] Deleted original: {ts_file.name}")
+                            stats.deleted += 1
+                        except Exception as e:
+                            print(f"[WARNING] Failed to delete {ts_file.name}: {e}")
+                    else:
+                        print(f"[INFO] Kept original: {ts_file.name}")
+                    
                     continue
                 
                 if dry_run:
