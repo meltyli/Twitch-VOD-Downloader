@@ -782,6 +782,19 @@ def process_file(
     if mp4_exists_and_valid(mp4_path):
         logger.info(f"Skipping {ts_path.name} - valid MP4 already exists")
         stats.skipped_existing += 1
+        
+        # If user wants auto-delete, offer to delete the original .ts file
+        # since compression was already done previously
+        if prompt_delete(ts_path, auto_yes):
+            try:
+                ts_path.unlink()
+                logger.success(f"Deleted original: {ts_path.name}")
+                stats.deleted += 1
+            except Exception as e:
+                logger.error(f"Failed to delete {ts_path.name}: {e}")
+        else:
+            logger.info(f"Kept original: {ts_path.name}")
+        
         return True
     
     logger.progress(f"Processing: {ts_path.name}")
