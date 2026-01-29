@@ -63,6 +63,8 @@ class StreamRecorder:
         self.stream_check_timeout = float(self.config.get('stream_check_timeout', 10))
         self.stream_check_retries = int(self.config.get('stream_check_retries', 2))
         self.stream_check_backoff = float(self.config.get('stream_check_backoff', 5))
+        # Headless mode flag (may be set during first-run prompt)
+        self.run_headless = bool(self.config.get('run_headless', False))
         self.current_process = None  # Keep for backward compatibility with old methods
         self.active_recordings = {}  # Dictionary of {streamer_name: process}
         self.recording_threads = {}  # Dictionary of {streamer_name: thread}
@@ -151,7 +153,27 @@ class StreamRecorder:
                 'stream_check_timeout': self.stream_check_timeout,
                 'stream_check_retries': self.stream_check_retries,
                 'stream_check_backoff': self.stream_check_backoff
+                ,
+                'run_headless': self.run_headless
             }
+            # If the config file or directory is not writable (e.g., mounted read-only in Docker), skip saving.
+            config_path = os.path.abspath(self.config_file)
+            config_dir = os.path.dirname(config_path) or os.getcwd()
+            if os.path.exists(config_path):
+                if not os.access(config_path, os.W_OK):
+                    try:
+                        self.logger.warning("Config file %s is not writable; skipping save", self.config_file)
+                    except Exception:
+                        print(f"Config file {self.config_file} is not writable; skipping save")
+                    return
+            else:
+                if not os.access(config_dir, os.W_OK):
+                    try:
+                        self.logger.warning("Config directory %s is not writable; skipping save", config_dir)
+                    except Exception:
+                        print(f"Config directory {config_dir} is not writable; skipping save")
+                    return
+
             with open(self.config_file, 'w') as f:
                 json.dump(self.config, f, indent=4)
         except Exception as e:
@@ -919,7 +941,39 @@ class StreamRecorder:
 
 def main():
     recorder = StreamRecorder()
-    recorder.menu()
+
+    # First-time headless setup: prompt user if running interactively; otherwise default to headless.
+    try:
+        if 'run_headless' not in recorder.config:
+            if sys.stdin.isatty():
+                ans = input("First-time setup: run in headless mode (no interactive menu)? [y/N]: ").strip().lower()
+                recorder.run_headless = ans in ('y', 'yes')
+            else:
+                recorder.run_headless = True
+                recorder.logger.info("No TTY detected; defaulting to headless mode.")
+
+            recorder.config['run_headless'] = recorder.run_headless
+            recorder.save_config()
+    except Exception as e:
+        try:
+            recorder.logger.exception(f"Error during first-time headless setup: {e}")
+        except Exception:
+            print(f"Error during first-time headless setup: {e}")
+        # Fail safe to headless
+        recorder.run_headless = True
+
+    if recorder.run_headless:
+        if not recorder.streamers:
+            recorder.logger.info("Headless mode requested but no streamers configured. Exiting.")
+            print("No streamers configured for headless mode. Please add streamers or run interactively.")
+            return
+
+        # Start monitoring all configured streamers (cap at 5)
+        selected = recorder.streamers[:5]
+        recorder.logger.info("Starting headless monitoring for %d streamer(s): %s", len(selected), ",".join(selected))
+        recorder.monitor_multiple_streamers(selected, recorder.default_check_interval)
+    else:
+        recorder.menu()
 
 if __name__ == "__main__":
     main()

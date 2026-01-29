@@ -18,6 +18,53 @@ A Python CLI tool that monitors Twitch streamers and automatically records their
 
 For complete installation and setup instructions, see the [**Quick Start Guide**](https://github.com/meltyli/Twitch-VOD-Downloader/wiki/Quick-Start-Guide) on the Wiki.
 
+## Running
+
+Docker (recommended):
+
+1. Build and start in the background:
+
+```bash
+docker compose up --build -d
+```
+
+2. Follow container stdout (also shows logs written to the host-mounted log file):
+
+```bash
+docker compose logs -f server
+```
+
+3. View the application log file written by the container (host path):
+
+```bash
+tail -f ./logs/log
+```
+
+Stop and remove containers:
+
+```bash
+docker compose down
+```
+
+Local development (without Docker):
+
+```bash
+# create and activate venv (macOS/Linux)
+python3 -m venv pyenv
+source pyenv/bin/activate
+pip install -r requirements.txt
+python3 -m src.twitch_recorder
+```
+
+Logs
+- The app logs to both stdout and a rotating file at `/logs/log` inside the container. The compose setup mounts `./logs` on the host to `/logs` in the container so you can inspect logs with `tail -f ./logs/log`.
+
+Configuration
+- Edit `config.json` to set defaults. New network settings available:
+	- `stream_check_timeout`: seconds to wait for `streamlink` (default 10)
+	- `stream_check_retries`: number of retries on failure (default 2)
+	- `stream_check_backoff`: base seconds for exponential backoff between retries (default 5)
+
 ## Roadmap
 
 ### Feature Roadmap
