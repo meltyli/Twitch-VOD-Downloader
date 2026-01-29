@@ -18,7 +18,9 @@ services:
     volumes:
       - ./recordings:/app/recordings
       - ./logs:/logs
-      - ./config.json:/app/config.json:ro
+      - ./config.json:/app/config.json
+    stdin_open: true
+    tty: true
     restart: unless-stopped
 
 # The commented out section below is an example of how to define a PostgreSQL

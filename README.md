@@ -28,13 +28,27 @@ Docker (recommended):
 docker compose up --build -d
 ```
 
-2. Follow container stdout (also shows logs written to the host-mounted log file):
+2. **First-run setup**: Attach to the container to answer the interactive prompt:
+
+```bash
+docker compose attach server
+```
+
+You'll be prompted: `First-time setup: run in headless mode (no interactive menu)? [y/N]:`
+- Type `y` for headless mode (auto-monitors all configured streamers on startup)
+- Type `n` or press Enter for interactive menu mode
+
+After answering, your choice is saved to `config.json`. 
+
+To detach without stopping the container: press `Ctrl-P` then `Ctrl-Q`
+
+3. Follow container stdout (also shows logs written to the host-mounted log file):
 
 ```bash
 docker compose logs -f server
 ```
 
-3. View the application log file written by the container (host path):
+4. View the application log file written by the container (host path):
 
 ```bash
 tail -f ./logs/log
