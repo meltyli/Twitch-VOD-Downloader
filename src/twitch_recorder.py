@@ -23,7 +23,6 @@ class StreamRecorder:
         try:
             os.makedirs(logs_dir, exist_ok=True)
         except Exception:
-            # If we can't create the dir (permissions), fall back to cwd 'logs'
             logs_dir = os.path.join(os.getcwd(), 'logs')
             os.makedirs(logs_dir, exist_ok=True)
 
@@ -43,7 +42,6 @@ class StreamRecorder:
         sh.setFormatter(formatter)
         fh.setFormatter(formatter)
 
-        # Avoid adding duplicate handlers if re-instantiated
         if not logger.handlers:
             logger.addHandler(sh)
             logger.addHandler(fh)
@@ -63,17 +61,16 @@ class StreamRecorder:
         self.stream_check_timeout = float(self.config.get('stream_check_timeout', 10))
         self.stream_check_retries = int(self.config.get('stream_check_retries', 2))
         self.stream_check_backoff = float(self.config.get('stream_check_backoff', 5))
-        # Headless mode flag (may be set during first-run prompt)
         self.run_headless = bool(self.config.get('run_headless', False))
-        self.current_process = None  # Keep for backward compatibility with old methods
-        self.active_recordings = {}  # Dictionary of {streamer_name: process}
-        self.recording_threads = {}  # Dictionary of {streamer_name: thread}
+        self.current_process = None
+        self.active_recordings = {}
+        self.recording_threads = {}
         self.monitoring_thread = None
         self.stop_monitoring_event = threading.Event()
         self.stop_all_recordings = threading.Event()
-        self.recordings_path = 'recordings'  # Default recordings directory
+        self.recordings_path = 'recordings'
         self.console = Console()
-        self.monitoring_interrupted = False  # Flag for Ctrl+C during monitoring
+        self.monitoring_interrupted = False
 
     def monitoring_signal_handler(self, signum, frame):
         """Handle Ctrl+C during monitoring to gracefully stop and return to menu"""
@@ -96,24 +93,20 @@ class StreamRecorder:
             if os.path.exists(self.config_file):
                 with open(self.config_file, 'r') as f:
                     config = json.load(f)
-                    # Add network/check defaults if not present
                     if 'stream_check_timeout' not in config:
                         config['stream_check_timeout'] = 10
                     if 'stream_check_retries' not in config:
                         config['stream_check_retries'] = 2
                     if 'stream_check_backoff' not in config:
                         config['stream_check_backoff'] = 5
-                    # Add compressed_directory if not present
                     if 'compressed_directory' not in config:
                         config['compressed_directory'] = os.path.join(config.get('output_directory', 'recordings'), 'compressed')
-                    # Add compression defaults if not present
                     if 'default_crf' not in config:
                         config['default_crf'] = 24
                     if 'default_preset' not in config:
                         config['default_preset'] = 'faster'
                     return config
 
-            # Return default configuration
             return {
                 'streamers': [],
                 'output_directory': 'recordings',
@@ -126,7 +119,6 @@ class StreamRecorder:
                 'default_preset': 'faster'
             }
         except Exception as e:
-            # Logging may not be available in some very early failure modes; fall back to print
             try:
                 self.logger.exception(f"Error loading config: {e}")
             except Exception:
@@ -156,7 +148,6 @@ class StreamRecorder:
                 ,
                 'run_headless': self.run_headless
             }
-            # If the config file or directory is not writable (e.g., mounted read-only in Docker), skip saving.
             config_path = os.path.abspath(self.config_file)
             config_dir = os.path.dirname(config_path) or os.getcwd()
             if os.path.exists(config_path):
@@ -215,7 +206,6 @@ class StreamRecorder:
             except Exception as e:
                 self.logger.exception("Unexpected error when checking %s (attempt %d): %s", channel_name, attempt, str(e))
 
-            # If here, attempt failed. If more attempts remain, sleep exponential backoff
             if attempt <= retries:
                 sleep_time = backoff * (2 ** (attempt - 1))
                 self.logger.info("Retrying %s in %.1f seconds (attempt %d of %d)", channel_name, sleep_time, attempt + 1, retries + 1)
@@ -237,24 +227,19 @@ class StreamRecorder:
     def record_stream(self, channel_name):
         """Record a single stream"""
         try:
-            # Create output directory if it doesn't exist
             os.makedirs(self.output_directory, exist_ok=True)
 
-            # Format filename with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_file = os.path.join(self.output_directory, f"{channel_name}_{timestamp}.ts")
             
-            # Start recording
             try:
                 self.logger.info(f"Recording {channel_name}'s stream to {output_file}")
             except Exception:
                 print(f"[{datetime.now()}] Recording {channel_name}'s stream to {output_file}")
             
-            # Use subprocess to start recording
             command = f"streamlink https://twitch.tv/{channel_name} best -o {output_file}"
             self.current_process = subprocess.Popen(command, shell=True)
             
-            # Create a thread to monitor the subprocess
             def monitor_process():
                 self.current_process.wait()
                 try:
@@ -267,11 +252,9 @@ class StreamRecorder:
             monitor_thread.daemon = True
             monitor_thread.start()
             
-            # Wait for user input to manually stop recording
             print("Press Enter to stop recording manually...")
             input()  # This still allows manual stopping
             if self.current_process and self.current_process.poll() is None:
-                # Only stop if process is still running
                 self.stop_recording()
         except Exception as e:
             try:
@@ -282,17 +265,13 @@ class StreamRecorder:
     def record_stream_concurrent(self, channel_name, progress, task_id):
         """Record a single stream with progress tracking"""
         try:
-            # Create output directory if it doesn't exist
             os.makedirs(self.output_directory, exist_ok=True)
 
-            # Format filename with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_file = os.path.join(self.output_directory, f"{channel_name}_{timestamp}.ts")
 
-            # Start recording
             progress.update(task_id, description=f"[green]{channel_name}: Recording...")
 
-            # Use subprocess to start recording
             command = f"streamlink https://twitch.tv/{channel_name} best -o {output_file}"
             process = subprocess.Popen(
                 command,
@@ -303,9 +282,7 @@ class StreamRecorder:
 
             self.active_recordings[channel_name] = process
 
-            # Monitor the process
             while process.poll() is None and not self.stop_all_recordings.is_set():
-                # Check file size for progress indication
                 if os.path.exists(output_file):
                     file_size = os.path.getsize(output_file)
                     progress.update(task_id, completed=file_size / (1024 * 1024))  # Convert to MB
@@ -336,14 +313,11 @@ class StreamRecorder:
 
         while not self.stop_all_recordings.is_set():
             try:
-                # Check if stream is live
                 if self.is_stream_live(channel_name):
                     progress.update(task_id, description=f"[yellow]{channel_name}: Stream detected! Starting recording...")
 
-                    # Start recording
                     self.record_stream_concurrent(channel_name, progress, task_id)
 
-                    # After recording ends, wait a bit before checking again
                     if not self.stop_all_recordings.is_set():
                         progress.update(task_id, description=f"[cyan]{channel_name}: Waiting 30s before next check...")
                         for _ in range(30):
@@ -354,7 +328,6 @@ class StreamRecorder:
                     # Not live, show monitoring status
                     progress.update(task_id, description=f"[dim]{channel_name}: Offline - checking in {check_interval}m...")
 
-                # Wait for check interval
                 if not self.stop_all_recordings.is_set():
                     wait_time = check_interval * 60
                     for _ in range(wait_time):
@@ -373,7 +346,6 @@ class StreamRecorder:
         self.stop_all_recordings.clear()
         self.monitoring_interrupted = False
 
-        # Set up signal handler for Ctrl+C
         original_sigint_handler = signal.signal(signal.SIGINT, self.monitoring_signal_handler)
 
         try:
@@ -385,13 +357,11 @@ class StreamRecorder:
                 console=self.console
             ) as progress:
 
-                # Create progress tasks for each streamer
                 tasks = {}
                 for streamer in selected_streamers:
                     task_id = progress.add_task(f"[cyan]{streamer}: Initializing...", total=None)
                     tasks[streamer] = task_id
 
-                # Start monitoring threads for each streamer
                 threads = []
                 for streamer in selected_streamers:
                     thread = threading.Thread(
@@ -406,7 +376,6 @@ class StreamRecorder:
                 # Show instructions
                 self.console.print("\n[bold yellow]Press Ctrl+C to stop all monitoring and save any active recordings[/bold yellow]")
 
-                # Wait for all threads to complete or stop signal
                 for thread in threads:
                     thread.join()
 
@@ -418,7 +387,6 @@ class StreamRecorder:
                 self.recording_threads.clear()
 
         finally:
-            # Restore original signal handler
             signal.signal(signal.SIGINT, original_sigint_handler)
 
     def stop_recording(self):
@@ -429,7 +397,6 @@ class StreamRecorder:
                 self.current_process.wait(timeout=5)
                 print("Recording stopped.")
 
-                # Add delay before checking again
                 if hasattr(self, 'monitor_after_stream') and self.monitor_after_stream:
                     print(f"Waiting 30 seconds before checking if {self.current_streamer} is live again...")
                     time.sleep(30)
@@ -447,12 +414,10 @@ class StreamRecorder:
 
     def add_streamer(self):
         """Add a new streamer to monitor"""
-        # Display current streamers
         print("\nCurrent Monitored Streamers:")
         for streamer in self.streamers:
             print(streamer)
         
-        # Prompt for new streamer
         streamer = input("\nEnter Twitch username to add (or 'q' to cancel): ").strip().lower()
         
         if streamer == 'q':
@@ -474,19 +439,16 @@ class StreamRecorder:
             input("Press Enter to continue...")
             return
 
-        # Display streamers with numbers
         print("\nCurrently Monitored Streamers:")
         for i, streamer in enumerate(self.streamers, 1):
             print(f"{i}. {streamer}")
 
-        # Prompt user to choose a streamer to remove
         try:
             choice = input("\nEnter the number of the streamer to remove (or 'q' to quit): ")
             
             if choice.lower() == 'q':
                 return
 
-            # Validate choice
             index = int(choice) - 1
             if 0 <= index < len(self.streamers):
                 removed_streamer = self.streamers.pop(index)
@@ -516,7 +478,6 @@ class StreamRecorder:
                     if choice.lower() == 'q':
                         break
 
-                    # Validate choice
                     index = int(choice) - 1
                     if 0 <= index < len(live_streamers):
                         selected_streamer = live_streamers[index]
@@ -527,7 +488,6 @@ class StreamRecorder:
                 except ValueError:
                     print("Invalid input. Please enter a number or 'q'.")
             
-            # Wait for the specified interval
             wait_time = check_interval * 60  # convert minutes to seconds
             self.stop_monitoring_event.wait(wait_time)
 
@@ -538,7 +498,6 @@ class StreamRecorder:
             input("Press Enter to continue...")
             return
 
-        # Display all monitored streamers
         print("\nMonitored Streamers:")
         for i, streamer in enumerate(self.streamers, 1):
             print(f"{i}. {streamer}")
@@ -547,7 +506,6 @@ class StreamRecorder:
         print("Enter streamer numbers separated by commas (e.g., 1,2,3) to monitor multiple streamers (max 5)")
         print("Streams will automatically start recording when they go live")
 
-        # Get streamer selection
         selected_streamers = []
         while True:
             try:
@@ -562,7 +520,6 @@ class StreamRecorder:
                 else:
                     indices = [int(choice.strip()) - 1]
 
-                # Validate all selections
                 if all(0 <= idx < len(self.streamers) for idx in indices):
                     if len(indices) > 5:
                         print("You can only select up to 5 streamers at once. Please try again.")
@@ -576,7 +533,6 @@ class StreamRecorder:
             except ValueError:
                 print("Invalid input. Please enter valid numbers.")
 
-        # Use default check interval from config
         check_interval = self.default_check_interval
 
         print(f"\nStarting continuous monitoring for {len(selected_streamers)} streamer(s)")
@@ -584,7 +540,6 @@ class StreamRecorder:
         print("Streams will automatically record when live and resume monitoring after they end")
         print()
 
-        # Start monitoring
         self.monitor_multiple_streamers(selected_streamers, check_interval)
 
     def change_settings(self):
@@ -674,14 +629,12 @@ class StreamRecorder:
         # Reset the interrupted flag before starting
         compress_module.interrupted = False
         
-        # Find .ts files in the output directory
         output_path = Path(self.output_directory)
         if not output_path.exists():
             print(f"Output directory does not exist: {self.output_directory}")
             input("Press Enter to continue...")
             return
         
-        # Get all .ts files and filter out macOS resource fork files (._filename)
         ts_files = sorted([f for f in output_path.glob("*.ts") if not f.name.startswith('._')])
         
         if not ts_files:
@@ -725,11 +678,9 @@ class StreamRecorder:
             input("Press Enter to continue...")
             return
         
-        # Use default compression settings from config
         crf = self.default_crf
         preset = self.default_preset
         
-        # Create compressed directory if it doesn't exist
         compressed_path = Path(self.compressed_directory)
         try:
             compressed_path.mkdir(parents=True, exist_ok=True)
@@ -747,7 +698,6 @@ class StreamRecorder:
             auto_delete = input("\nAutomatically delete original .ts files after successful compression? [y/N]: ").strip().lower()
             auto_yes = auto_delete in ['y', 'yes']
         
-        # Check for ffmpeg
         if not compress_module.check_ffmpeg_installed():
             print("\n[ERROR] ffmpeg and ffprobe are required but not found on PATH")
             print("Install with: brew install ffmpeg (macOS) or apt-get install ffmpeg (Linux)")
@@ -773,12 +723,10 @@ class StreamRecorder:
                 
                 output_file = compressed_path / ts_file.with_suffix('.mp4').name
                 
-                # Check if already exists and valid
                 if compress_module.mp4_exists_and_valid(output_file):
                     print(f"[INFO] Skipping {ts_file.name} - valid MP4 already exists")
                     stats.skipped_existing += 1
                     
-                    # If user wants auto-delete, delete the original .ts file
                     # since compression was already done previously
                     if auto_yes:
                         try:
@@ -849,7 +797,6 @@ class StreamRecorder:
         except KeyboardInterrupt:
             print("\n[WARNING] Operation cancelled by user")
         
-        # Print summary
         print("\n" + "="*60)
         if dry_run:
             print("Dry Run Summary (No files were modified)")
@@ -942,18 +889,30 @@ class StreamRecorder:
 def main():
     recorder = StreamRecorder()
 
-    # First-time headless setup: prompt user if running interactively; otherwise default to headless.
+    # First-time headless setup: 
+    # - In Docker (DOCKER env set), default to headless to avoid blocking on input
+    # - Outside Docker without TTY, default to headless
     try:
         if 'run_headless' not in recorder.config:
-            if sys.stdin.isatty():
+            is_docker = os.environ.get('DOCKER', '').strip() == '1'
+            
+            if is_docker:
+                # Docker mode: default to headless unless user attaches and sets it
+                recorder.run_headless = True
+                recorder.logger.info("Docker first run: defaulting to headless mode. To use interactive mode, run 'docker compose exec server python3 -m src.twitch_recorder' and edit config.")
+            elif sys.stdin.isatty():
                 ans = input("First-time setup: run in headless mode (no interactive menu)? [y/N]: ").strip().lower()
                 recorder.run_headless = ans in ('y', 'yes')
             else:
+                # Local without TTY: default headless
                 recorder.run_headless = True
                 recorder.logger.info("No TTY detected; defaulting to headless mode.")
 
             recorder.config['run_headless'] = recorder.run_headless
             recorder.save_config()
+    except KeyboardInterrupt:
+        print("\nSetup interrupted. Exiting.")
+        return
     except Exception as e:
         try:
             recorder.logger.exception(f"Error during first-time headless setup: {e}")
@@ -968,7 +927,6 @@ def main():
             print("No streamers configured for headless mode. Please add streamers or run interactively.")
             return
 
-        # Start monitoring all configured streamers (cap at 5)
         selected = recorder.streamers[:5]
         recorder.logger.info("Starting headless monitoring for %d streamer(s): %s", len(selected), ",".join(selected))
         recorder.monitor_multiple_streamers(selected, recorder.default_check_interval)

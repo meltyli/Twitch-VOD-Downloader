@@ -189,7 +189,6 @@ def mp4_exists_and_valid(mp4_path: Path) -> bool:
         
         probe_data = json.loads(result.stdout.decode('utf-8'))
         
-        # Check for valid format and nonzero size
         if 'format' not in probe_data:
             return False
         
@@ -284,7 +283,6 @@ def remux_ts_to_mp4(input_path: Path, output_path: Path) -> bool:
             universal_newlines=True
         )
         
-        # Monitor for completion or interruption
         stderr_lines = []
         last_update_time = 0
         for line in current_process.stderr:
@@ -293,16 +291,13 @@ def remux_ts_to_mp4(input_path: Path, output_path: Path) -> bool:
                 break
             stderr_lines.append(line)
             if "time=" in line.lower():
-                # Only update once per second to avoid spam
                 current_time = time.time()
                 if current_time - last_update_time >= 1.0:
-                    # Use carriage return to update same line
                     print(f"\r  Remux: {line.strip()}", end='', flush=True)
                     last_update_time = current_time
         
         current_process.wait()
         
-        # Print newline after progress updates
         print()
         
         if interrupted:
@@ -321,7 +316,6 @@ def remux_ts_to_mp4(input_path: Path, output_path: Path) -> bool:
         
         logger.success(f"Remux complete: {output_path.name}")
         current_process = None
-        # Don't clear current_temp_file yet - need it for cleanup if compression fails
         return True
         
     except KeyboardInterrupt:
@@ -376,7 +370,6 @@ def compress_file(input_path: Path, output_path: Path, allow_video_only: bool = 
         # Cleanup already handled by remux_ts_to_mp4
         return False
     
-    # Step 2: Probe the remuxed file to check streams
     probe_data = probe_file(temp_remux_path)
     if not probe_data:
         logger.error(f"Cannot probe remuxed file: {temp_remux_path.name}")
@@ -404,7 +397,6 @@ def compress_file(input_path: Path, output_path: Path, allow_video_only: bool = 
     use_hardware = False
     if platform.system() == 'Darwin':  # macOS
         try:
-            # Check if VideoToolbox HEVC encoder is available
             probe_result = subprocess.run(
                 ["ffmpeg", "-hide_banner", "-encoders"],
                 stdout=subprocess.PIPE,
@@ -426,19 +418,16 @@ def compress_file(input_path: Path, output_path: Path, allow_video_only: bool = 
         "-map", "0:v:0",  # Map first video stream
     ]
     
-    # Only map audio if it exists
     if audio_streams:
         cmd.extend(["-map", "0:a:0"])  # Map first audio stream
     
     if use_hardware:
-        # Use hardware acceleration (much faster on Apple Silicon)
         cmd.extend([
             "-c:v", "hevc_videotoolbox",  # Hardware H.265 encoder
             "-b:v", "6M",  # Target bitrate (adjust based on resolution)
             "-q:v", "65",  # Quality (0-100, higher = better, 65 ≈ CRF 24)
         ])
     else:
-        # Use software encoder with optimized settings for streaming content
         cmd.extend([
             "-c:v", "libx265",  # Use H.265/HEVC codec
             "-crf", str(crf),  # Quality setting
@@ -466,7 +455,6 @@ def compress_file(input_path: Path, output_path: Path, allow_video_only: bool = 
             universal_newlines=True
         )
         
-        # Monitor the process and show progress
         stderr_lines = []
         last_update_time = 0
         for line in current_process.stderr:
@@ -474,18 +462,14 @@ def compress_file(input_path: Path, output_path: Path, allow_video_only: bool = 
                 current_process.terminate()
                 break
             stderr_lines.append(line)
-            # Show progress if available (ffmpeg outputs to stderr)
             if "time=" in line.lower():
-                # Only update once per second to avoid spam
                 current_time = time.time()
                 if current_time - last_update_time >= 1.0:
-                    # Use carriage return to update same line
                     print(f"\r  {line.strip()}", end='', flush=True)
                     last_update_time = current_time
         
         current_process.wait()
         
-        # Print newline after progress updates
         print()
         
         if interrupted:
@@ -576,7 +560,6 @@ def verify_compression(input_path: Path, output_path: Path, tolerance: float = 2
     if not output_probe:
         return False, "Failed to probe output file"
     
-    # Check output file size
     if not output_path.exists() or output_path.stat().st_size == 0:
         return False, "Output file is empty or doesn't exist"
     
@@ -597,7 +580,6 @@ def verify_compression(input_path: Path, output_path: Path, tolerance: float = 2
     if input_audio and not output_audio:
         return False, "Output missing audio stream that was in input"
     
-    # Check codec names (output should be hevc/h265 for video)
     output_vcodec = output_video[0].get('codec_name', '').lower()
     
     if output_vcodec not in ['hevc', 'h265']:
@@ -609,7 +591,6 @@ def verify_compression(input_path: Path, output_path: Path, tolerance: float = 2
         if output_acodec not in ['aac', 'mp3', 'opus', 'ac3', 'eac3']:
             return False, f"Unexpected audio codec: {output_acodec}"
     
-    # Get format information
     input_format = input_probe.get('format', {})
     output_format = output_probe.get('format', {})
     
@@ -623,7 +604,6 @@ def verify_compression(input_path: Path, output_path: Path, tolerance: float = 2
     if output_duration < 5:
         return False, f"Output duration suspiciously short: {output_duration:.2f}s"
     
-    # Compare frame counts if available (more reliable for fragmented streams)
     # Note: .ts files from streaming often don't have frame count metadata,
     # but .mp4 files will have it after remuxing
     input_video_stream = input_video[0]
@@ -632,7 +612,6 @@ def verify_compression(input_path: Path, output_path: Path, tolerance: float = 2
     input_frames = input_video_stream.get('nb_frames')
     output_frames = output_video_stream.get('nb_frames')
     
-    # If BOTH have frame counts available, use them for verification
     if input_frames and output_frames:
         try:
             input_frame_count = int(input_frames)
@@ -643,7 +622,6 @@ def verify_compression(input_path: Path, output_path: Path, tolerance: float = 2
             
             if frame_diff_percent > 1.0:
                 logger.info(f"Frame count: {input_frame_count} → {output_frame_count} ({frame_diff_percent:.2f}% difference)")
-                # Only fail if difference is extreme (>5%)
                 if frame_diff_percent > 5.0:
                     return False, f"Frame count mismatch: {frame_diff_percent:.2f}% difference"
             else:
@@ -685,18 +663,15 @@ def verify_compression(input_path: Path, output_path: Path, tolerance: float = 2
         # Log duration comparison
         logger.info(f"Duration: {input_duration:.1f}s → {output_duration:.1f}s (diff: {duration_diff:.1f}s = {duration_diff_percent:.2%}, tolerance: {percent_tolerance:.2%})")
         
-        # For longer videos (>30min), use percentage-based tolerance
         # For shorter videos, allow larger differences due to encoding overhead
         if input_duration > 1800:  # >30 minutes
             # Allow the output to be slightly longer or shorter within tolerance
             if duration_diff_percent > percent_tolerance:
-                # Only fail if it's way off (>10x the tolerance)
                 if duration_diff_percent > percent_tolerance * 10:
                     return False, f"Duration difference too large: {duration_diff_percent:.2%} (tolerance: {percent_tolerance:.2%})"
                 else:
                     logger.warning(f"Duration difference {duration_diff_percent:.2%} exceeds tolerance {percent_tolerance:.2%} but within acceptable range")
         else:
-            # For short videos, use more lenient checks
             # Output should not be >20% longer than input
             if output_duration > input_duration * 1.2:
                 return False, f"Output duration much longer than input: {output_duration:.1f}s > {input_duration:.1f}s"
@@ -778,12 +753,10 @@ def process_file(
     
     mp4_path = get_output_path(ts_path)
     
-    # Skip if MP4 already exists and is valid
     if mp4_exists_and_valid(mp4_path):
         logger.info(f"Skipping {ts_path.name} - valid MP4 already exists")
         stats.skipped_existing += 1
         
-        # If user wants auto-delete, offer to delete the original .ts file
         # since compression was already done previously
         if prompt_delete(ts_path, auto_yes):
             try:
@@ -831,7 +804,6 @@ def process_file(
     stats.succeeded += 1
     stats.processed += 1
     
-    # Prompt for deletion
     if prompt_delete(ts_path, auto_yes):
         try:
             ts_path.unlink()
@@ -870,10 +842,8 @@ def main():
     """Main entry point"""
     global interrupted
     
-    # Reset interrupted flag at start of each run
     interrupted = False
     
-    # Set up signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
@@ -893,7 +863,6 @@ Examples:
   # Auto-confirm deletion and recurse subdirectories
   %(prog)s /path/to/recordings -r --yes
   
-  # Use higher quality (lower CRF) and slower preset
   %(prog)s /path/to/recordings --crf 20 --preset slow
   
   # Allow video-only files (no audio required)
@@ -987,7 +956,6 @@ Interrupting:
     
     args = parser.parse_args()
     
-    # Validate directory
     directory = Path(args.directory).resolve()
     if not directory.exists():
         logger.error(f"Directory not found: {directory}")
@@ -997,13 +965,11 @@ Interrupting:
         logger.error(f"Not a directory: {directory}")
         return 1
     
-    # Check for ffmpeg
     if not check_ffmpeg_installed():
         logger.error("ffmpeg and ffprobe are required but not found on PATH")
         logger.error("Install with: brew install ffmpeg (macOS) or apt-get install ffmpeg (Linux)")
         return 1
     
-    # Find .ts files
     logger.info(f"Scanning directory: {directory}")
     if args.recursive:
         logger.info("Recursive mode enabled")
@@ -1054,7 +1020,6 @@ Interrupting:
             stats.errors.append((ts_file.name, str(e)))
             print()
     
-    # Print summary
     print_summary(stats, logger)
     
     return 0 if stats.failed == 0 else 1
