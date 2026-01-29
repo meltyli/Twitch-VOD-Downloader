@@ -25,10 +25,7 @@ class StreamRecorder:
         except Exception:
             # If we can't create the dir (permissions), fall back to cwd 'logs'
             logs_dir = os.path.join(os.getcwd(), 'logs')
-            try:
-                self.logger.exception(f"Error saving config: {e}")
-            except Exception:
-                print(f"Error saving config: {e}")
+            os.makedirs(logs_dir, exist_ok=True)
 
         log_file = os.path.join(logs_dir, 'log')
         logger = logging.getLogger('twitch_recorder')
@@ -61,6 +58,11 @@ class StreamRecorder:
         self.default_check_interval = self.config.get('default_check_interval', 2)
         self.default_crf = self.config.get('default_crf', 24)
         self.default_preset = self.config.get('default_preset', 'faster')
+
+        # New configurable network settings for stream checks
+        self.stream_check_timeout = float(self.config.get('stream_check_timeout', 10))
+        self.stream_check_retries = int(self.config.get('stream_check_retries', 2))
+        self.stream_check_backoff = float(self.config.get('stream_check_backoff', 5))
         self.current_process = None  # Keep for backward compatibility with old methods
         self.active_recordings = {}  # Dictionary of {streamer_name: process}
         self.recording_threads = {}  # Dictionary of {streamer_name: thread}
@@ -92,6 +94,13 @@ class StreamRecorder:
             if os.path.exists(self.config_file):
                 with open(self.config_file, 'r') as f:
                     config = json.load(f)
+                    # Add network/check defaults if not present
+                    if 'stream_check_timeout' not in config:
+                        config['stream_check_timeout'] = 10
+                    if 'stream_check_retries' not in config:
+                        config['stream_check_retries'] = 2
+                    if 'stream_check_backoff' not in config:
+                        config['stream_check_backoff'] = 5
                     # Add compressed_directory if not present
                     if 'compressed_directory' not in config:
                         config['compressed_directory'] = os.path.join(config.get('output_directory', 'recordings'), 'compressed')
@@ -106,6 +115,9 @@ class StreamRecorder:
             return {
                 'streamers': [],
                 'output_directory': 'recordings',
+                'stream_check_timeout': 10,
+                'stream_check_retries': 2,
+                'stream_check_backoff': 5,
                 'compressed_directory': 'recordings/compressed',
                 'default_check_interval': 2,
                 'default_crf': 24,
@@ -135,7 +147,10 @@ class StreamRecorder:
                 'compressed_directory': self.compressed_directory,
                 'default_check_interval': self.default_check_interval,
                 'default_crf': self.default_crf,
-                'default_preset': self.default_preset
+                'default_preset': self.default_preset,
+                'stream_check_timeout': self.stream_check_timeout,
+                'stream_check_retries': self.stream_check_retries,
+                'stream_check_backoff': self.stream_check_backoff
             }
             with open(self.config_file, 'w') as f:
                 json.dump(self.config, f, indent=4)
@@ -147,23 +162,46 @@ class StreamRecorder:
 
     def is_stream_live(self, channel_name):
         """Check if a Twitch channel is currently live."""
-        try:
-            result = subprocess.run(
-                f"streamlink --json https://twitch.tv/{channel_name}",
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            
-            stream_info = json.loads(result.stdout)
-            return stream_info.get('streams') is not None and len(stream_info.get('streams')) > 0
-        except Exception as e:
+        timeout = float(getattr(self, 'stream_check_timeout', 10))
+        retries = int(getattr(self, 'stream_check_retries', 2))
+        backoff = float(getattr(self, 'stream_check_backoff', 5))
+
+        cmd = f"streamlink --json https://twitch.tv/{channel_name}"
+
+        for attempt in range(1, retries + 2):
             try:
-                self.logger.exception(f"Error checking if {channel_name} is live: {e}")
-            except Exception:
-                print(f"Error checking if {channel_name} is live: {e}")
-            return False
+                result = subprocess.run(
+                    cmd,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout
+                )
+
+                if result.returncode != 0:
+                    # Non-zero exit code - log and possibly retry
+                    self.logger.warning("streamlink returned non-zero for %s (attempt %d): %s", channel_name, attempt, result.stderr.strip())
+                else:
+                    try:
+                        stream_info = json.loads(result.stdout)
+                        return stream_info.get('streams') is not None and len(stream_info.get('streams')) > 0
+                    except json.JSONDecodeError:
+                        self.logger.warning("Failed to parse streamlink JSON for %s (attempt %d)", channel_name, attempt)
+
+            except subprocess.TimeoutExpired as e:
+                self.logger.warning("streamlink timeout checking %s (attempt %d): %s", channel_name, attempt, str(e))
+            except Exception as e:
+                self.logger.exception("Unexpected error when checking %s (attempt %d): %s", channel_name, attempt, str(e))
+
+            # If here, attempt failed. If more attempts remain, sleep exponential backoff
+            if attempt <= retries:
+                sleep_time = backoff * (2 ** (attempt - 1))
+                self.logger.info("Retrying %s in %.1f seconds (attempt %d of %d)", channel_name, sleep_time, attempt + 1, retries + 1)
+                time.sleep(sleep_time)
+
+        # All attempts exhausted
+        self.logger.error("All attempts exhausted checking if %s is live; marking as offline", channel_name)
+        return False
 
     def find_live_streamers(self):
         """Find which streamers in the list are currently live"""
