@@ -7,6 +7,8 @@ import sys
 import signal
 import platform
 import threading
+import logging
+from logging.handlers import RotatingFileHandler
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, DownloadColumn, TimeRemainingColumn
 from rich.live import Live
@@ -15,6 +17,43 @@ from rich.table import Table
 class StreamRecorder:
     def __init__(self, config_file='config.json'):
         self.config_file = config_file
+
+        # Configure logging early so errors during startup are captured.
+        logs_dir = os.environ.get('LOGS_DIR', '/logs')
+        try:
+            os.makedirs(logs_dir, exist_ok=True)
+        except Exception:
+            # If we can't create the dir (permissions), fall back to cwd 'logs'
+            logs_dir = os.path.join(os.getcwd(), 'logs')
+            try:
+                self.logger.exception(f"Error saving config: {e}")
+            except Exception:
+                print(f"Error saving config: {e}")
+
+        log_file = os.path.join(logs_dir, 'log')
+        logger = logging.getLogger('twitch_recorder')
+        logger.setLevel(logging.INFO)
+
+        # Stream handler (stdout)
+        sh = logging.StreamHandler(sys.stdout)
+        sh.setLevel(logging.INFO)
+
+        # Rotating file handler
+        fh = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5)
+        fh.setLevel(logging.INFO)
+
+        formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+        sh.setFormatter(formatter)
+        fh.setFormatter(formatter)
+
+        # Avoid adding duplicate handlers if re-instantiated
+        if not logger.handlers:
+            logger.addHandler(sh)
+            logger.addHandler(fh)
+
+        self.logger = logger
+
+        # Load config after logging is configured
         self.config = self.load_config()
         self.streamers = self.config.get('streamers', [])
         self.output_directory = self.config.get('output_directory', 'recordings')
@@ -62,6 +101,7 @@ class StreamRecorder:
                     if 'default_preset' not in config:
                         config['default_preset'] = 'faster'
                     return config
+
             # Return default configuration
             return {
                 'streamers': [],
@@ -72,7 +112,11 @@ class StreamRecorder:
                 'default_preset': 'faster'
             }
         except Exception as e:
-            print(f"Error loading config: {e}")
+            # Logging may not be available in some very early failure modes; fall back to print
+            try:
+                self.logger.exception(f"Error loading config: {e}")
+            except Exception:
+                print(f"Error loading config: {e}")
             return {
                 'streamers': [],
                 'output_directory': 'recordings',
@@ -96,7 +140,10 @@ class StreamRecorder:
             with open(self.config_file, 'w') as f:
                 json.dump(self.config, f, indent=4)
         except Exception as e:
-            print(f"Error saving config: {e}")
+            try:
+                self.logger.exception(f"Error saving config: {e}")
+            except Exception:
+                print(f"Error saving config: {e}")
 
     def is_stream_live(self, channel_name):
         """Check if a Twitch channel is currently live."""
@@ -112,7 +159,10 @@ class StreamRecorder:
             stream_info = json.loads(result.stdout)
             return stream_info.get('streams') is not None and len(stream_info.get('streams')) > 0
         except Exception as e:
-            print(f"Error checking if {channel_name} is live: {e}")
+            try:
+                self.logger.exception(f"Error checking if {channel_name} is live: {e}")
+            except Exception:
+                print(f"Error checking if {channel_name} is live: {e}")
             return False
 
     def find_live_streamers(self):
@@ -135,7 +185,10 @@ class StreamRecorder:
             output_file = os.path.join(self.output_directory, f"{channel_name}_{timestamp}.ts")
             
             # Start recording
-            print(f"[{datetime.now()}] Recording {channel_name}'s stream to {output_file}")
+            try:
+                self.logger.info(f"Recording {channel_name}'s stream to {output_file}")
+            except Exception:
+                print(f"[{datetime.now()}] Recording {channel_name}'s stream to {output_file}")
             
             # Use subprocess to start recording
             command = f"streamlink https://twitch.tv/{channel_name} best -o {output_file}"
@@ -144,7 +197,10 @@ class StreamRecorder:
             # Create a thread to monitor the subprocess
             def monitor_process():
                 self.current_process.wait()
-                print("Stream ended naturally.")
+                try:
+                    self.logger.info("Stream ended naturally.")
+                except Exception:
+                    print("Stream ended naturally.")
                 self.stop_recording()
                 
             monitor_thread = threading.Thread(target=monitor_process)
@@ -158,7 +214,10 @@ class StreamRecorder:
                 # Only stop if process is still running
                 self.stop_recording()
         except Exception as e:
-            print(f"Error recording {channel_name}'s stream: {e}")
+            try:
+                self.logger.exception(f"Error recording {channel_name}'s stream: {e}")
+            except Exception:
+                print(f"Error recording {channel_name}'s stream: {e}")
 
     def record_stream_concurrent(self, channel_name, progress, task_id):
         """Record a single stream with progress tracking"""
