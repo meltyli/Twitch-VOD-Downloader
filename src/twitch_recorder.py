@@ -195,26 +195,26 @@ class StreamRecorder:
 
                 if result.returncode != 0:
                     # Non-zero exit code - log and possibly retry
-                    self.logger.warning("streamlink returned non-zero for %s (attempt %d): %s", channel_name, attempt, result.stderr.strip())
+                    self.logger.debug("streamlink returned non-zero for %s (attempt %d): %s", channel_name, attempt, result.stderr.strip())
                 else:
                     try:
                         stream_info = json.loads(result.stdout)
                         return stream_info.get('streams') is not None and len(stream_info.get('streams')) > 0
                     except json.JSONDecodeError:
-                        self.logger.warning("Failed to parse streamlink JSON for %s (attempt %d)", channel_name, attempt)
+                        self.logger.debug("Failed to parse streamlink JSON for %s (attempt %d)", channel_name, attempt)
 
             except subprocess.TimeoutExpired as e:
-                self.logger.warning("streamlink timeout checking %s (attempt %d): %s", channel_name, attempt, str(e))
+                self.logger.debug("streamlink timeout checking %s (attempt %d): %s", channel_name, attempt, str(e))
             except Exception as e:
-                self.logger.exception("Unexpected error when checking %s (attempt %d): %s", channel_name, attempt, str(e))
+                self.logger.warning("Unexpected error when checking %s (attempt %d): %s", channel_name, attempt, str(e))
 
             if attempt <= retries:
                 sleep_time = backoff * (2 ** (attempt - 1))
-                self.logger.info("Retrying %s in %.1f seconds (attempt %d of %d)", channel_name, sleep_time, attempt + 1, retries + 1)
+                self.logger.debug("Retrying %s in %.1f seconds (attempt %d of %d)", channel_name, sleep_time, attempt + 1, retries + 1)
                 time.sleep(sleep_time)
 
         # All attempts exhausted
-        self.logger.error("All attempts exhausted checking if %s is live; marking as offline", channel_name)
+        self.logger.debug("All attempts exhausted checking if %s is live; marking as offline", channel_name)
         return False
 
     def find_live_streamers(self):
