@@ -116,7 +116,8 @@ class StreamRecorder:
                 'compressed_directory': 'recordings/compressed',
                 'default_check_interval': 2,
                 'default_crf': 24,
-                'default_preset': 'faster'
+                'default_preset': 'faster',
+                'run_headless': False
             }
         except Exception as e:
             try:
@@ -129,7 +130,8 @@ class StreamRecorder:
                 'compressed_directory': 'recordings/compressed',
                 'default_check_interval': 2,
                 'default_crf': 24,
-                'default_preset': 'faster'
+                'default_preset': 'faster',
+                'run_headless': False
             }
 
     def save_config(self):

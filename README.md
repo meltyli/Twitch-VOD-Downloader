@@ -14,66 +14,108 @@ A Python CLI tool that monitors Twitch streamers and automatically records their
 - Configurable output directories and compression settings
 - Interactive menu-driven interface
 
-## Setup
+## Prerequisites
 
-For complete installation and setup instructions, see the [**Quick Start Guide**](https://github.com/meltyli/Twitch-VOD-Downloader/wiki/Quick-Start-Guide) on the Wiki.
+- **Docker** and **Docker Compose** installed ([Get Docker](https://docs.docker.com/get-docker/))
+- For complete installation guide, see the [**Quick Start Guide**](https://github.com/meltyli/Twitch-VOD-Downloader/wiki/Quick-Start-Guide)
 
-## Running
+## Running (Docker)
 
-Docker (recommended):
+This application is designed to run in Docker and supports **full interactive menus** in containers.
 
-1. Build and start in the background:
+### Initial Setup
+
+1. **Build and start the container**:
 
 ```bash
-docker compose up --build -d
+docker compose up --build
 ```
 
-2. **First-run setup**: Attach to the container to answer the interactive prompt:
+The container starts with `stdin_open: true` and `tty: true` enabled, allowing full interactive menu navigation.
+
+2. **First-run setup prompt**:
+
+You'll see: `First-time setup: run in headless mode (no interactive menu)? [y/N]:`
+
+- Press **Enter** or type `n` for **interactive menu mode** (recommended) — navigate menus to add streamers, start monitoring, compress recordings
+- Type `y` for **headless mode** — automatically monitors all configured streamers on startup (no menus)
+
+Your choice is saved to `config.json`.
+
+### Interactive Menu Usage
+
+If you chose interactive mode, you'll see the main menu:
+
+```
+╔════════════════════════════════════╗
+║      Twitch Stream Recorder        ║
+╚════════════════════════════════════╝
+
+1. Manage Streamers
+2. Start Monitoring
+3. Compress Recordings to MP4 (H.265)
+4. Settings
+q. Exit
+```
+
+Navigate by typing option numbers. The menu runs inside the Docker container with full TTY support.
+
+**Detaching without stopping**: Press `Ctrl-P` then `Ctrl-Q` to detach and leave the container running.
+
+### Running in Background (Detached)
+
+For production/unattended use:
 
 ```bash
+# Start detached
+docker compose up -d
+
+# Attach to interact with menus
 docker compose attach server
-```
 
-You'll be prompted: `First-time setup: run in headless mode (no interactive menu)? [y/N]:`
-- Type `y` for headless mode (auto-monitors all configured streamers on startup)
-- Type `n` or press Enter for interactive menu mode
-
-After answering, your choice is saved to `config.json`. 
-
-To detach without stopping the container: press `Ctrl-P` then `Ctrl-Q`
-
-3. Follow container stdout (also shows logs written to the host-mounted log file):
-
-```bash
+# View logs
 docker compose logs -f server
-```
 
-4. View the application log file written by the container (host path):
-
-```bash
-tail -f ./logs/log
-```
-
-Stop and remove containers:
-
-```bash
+# Stop
 docker compose down
 ```
 
-Local development (without Docker):
+### Managing the Container
 
 ```bash
-# create and activate venv (macOS/Linux)
+# Restart container
+docker compose restart server
+
+# Execute commands inside running container
+docker compose exec server python3 -m src.compression recordings
+
+# Open shell inside container
+docker compose exec server /bin/bash
+```
+
+## Alternative: Local Development (Without Docker)
+
+For development without Docker:
+
+```bash
 python3 -m venv pyenv
 source pyenv/bin/activate
 pip install -r requirements.txt
 python3 -m src.twitch_recorder
 ```
 
-Logs
-- The app logs to both stdout and a rotating file at `/logs/log` inside the container. The compose setup mounts `./logs` on the host to `/logs` in the container so you can inspect logs with `tail -f ./logs/log`.
+## Logs
 
-Configuration
+The application logs to:
+- **Container stdout**: View with `docker compose logs -f server`
+- **Rotating log file**: `/logs/log` inside container, mounted to `./logs/log` on host
+
+```bash
+# View log file from host
+tail -f ./logs/log
+```
+
+## Configuration
 - Edit `config.json` to set defaults. New network settings available:
 	- `stream_check_timeout`: seconds to wait for `streamlink` (default 10)
 	- `stream_check_retries`: number of retries on failure (default 2)
