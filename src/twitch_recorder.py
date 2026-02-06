@@ -196,6 +196,8 @@ class StreamRecorder:
                 if result.returncode != 0:
                     # Non-zero exit code - log and possibly retry
                     self.logger.debug("streamlink returned non-zero for %s (attempt %d): %s", channel_name, attempt, result.stderr.strip())
+                    if self.run_headless and attempt == 1:
+                        self.logger.warning("Error checking %s: connection issue or streamer offline", channel_name)
                 else:
                     try:
                         stream_info = json.loads(result.stdout)
@@ -205,16 +207,22 @@ class StreamRecorder:
 
             except subprocess.TimeoutExpired as e:
                 self.logger.debug("streamlink timeout checking %s (attempt %d): %s", channel_name, attempt, str(e))
+                if self.run_headless and attempt == 1:
+                    self.logger.warning("Timeout checking %s: possible internet disconnection", channel_name)
             except Exception as e:
                 self.logger.warning("Unexpected error when checking %s (attempt %d): %s", channel_name, attempt, str(e))
 
             if attempt <= retries:
                 sleep_time = backoff * (2 ** (attempt - 1))
                 self.logger.debug("Retrying %s in %.1f seconds (attempt %d of %d)", channel_name, sleep_time, attempt + 1, retries + 1)
+                if self.run_headless:
+                    self.logger.info("Retrying %s in %.0f seconds...", channel_name, sleep_time)
                 time.sleep(sleep_time)
 
         # All attempts exhausted
         self.logger.debug("All attempts exhausted checking if %s is live; marking as offline", channel_name)
+        if self.run_headless:
+            self.logger.warning("Internet disconnection detected - monitoring paused, will retry in next check interval")
         return False
 
     def find_live_streamers(self):
@@ -264,7 +272,7 @@ class StreamRecorder:
             except Exception:
                 print(f"Error recording {channel_name}'s stream: {e}")
 
-    def record_stream_concurrent(self, channel_name, progress, task_id):
+    def record_stream_concurrent(self, channel_name, progress=None, task_id=None):
         """Record a single stream with progress tracking"""
         try:
             os.makedirs(self.output_directory, exist_ok=True)
@@ -272,7 +280,10 @@ class StreamRecorder:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_file = os.path.join(self.output_directory, f"{channel_name}_{timestamp}.ts")
 
-            progress.update(task_id, description=f"[green]{channel_name}: Recording...")
+            if self.run_headless:
+                self.logger.info("%s is live - starting recording to %s", channel_name, os.path.basename(output_file))
+            elif progress and task_id is not None:
+                progress.update(task_id, description=f"[green]{channel_name}: Recording...")
 
             command = f"streamlink https://twitch.tv/{channel_name} best -o {output_file}"
             process = subprocess.Popen(
@@ -287,48 +298,85 @@ class StreamRecorder:
             while process.poll() is None and not self.stop_all_recordings.is_set():
                 if os.path.exists(output_file):
                     file_size = os.path.getsize(output_file)
-                    progress.update(task_id, completed=file_size / (1024 * 1024))  # Convert to MB
+                    if progress and task_id is not None:
+                        progress.update(task_id, completed=file_size / (1024 * 1024))  # Convert to MB
                 time.sleep(1)
 
             # Process ended or stop requested
             if self.stop_all_recordings.is_set() and process.poll() is None:
-                progress.update(task_id, description=f"[yellow]{channel_name}: Stopping gracefully...")
+                if self.run_headless:
+                    self.logger.info("%s: Stopping recording gracefully...", channel_name)
+                elif progress and task_id is not None:
+                    progress.update(task_id, description=f"[yellow]{channel_name}: Stopping gracefully...")
                 process.terminate()
                 try:
                     process.wait(timeout=5)
-                    progress.update(task_id, description=f"[blue]{channel_name}: Stopped and saved")
+                    if self.run_headless:
+                        self.logger.info("%s: Recording stopped and saved", channel_name)
+                    elif progress and task_id is not None:
+                        progress.update(task_id, description=f"[blue]{channel_name}: Stopped and saved")
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    progress.update(task_id, description=f"[red]{channel_name}: Force stopped")
+                    if self.run_headless:
+                        self.logger.warning("%s: Recording force stopped", channel_name)
+                    elif progress and task_id is not None:
+                        progress.update(task_id, description=f"[red]{channel_name}: Force stopped")
             else:
-                progress.update(task_id, description=f"[blue]{channel_name}: Stream ended, saved to {os.path.basename(output_file)}")
+                if self.run_headless:
+                    self.logger.info("%s: Stream ended, saved to %s", channel_name, os.path.basename(output_file))
+                elif progress and task_id is not None:
+                    progress.update(task_id, description=f"[blue]{channel_name}: Stream ended, saved to {os.path.basename(output_file)}")
 
         except Exception as e:
-            progress.update(task_id, description=f"[red]{channel_name}: Error - {str(e)}")
+            if self.run_headless:
+                self.logger.error("%s: Recording error - %s", channel_name, str(e))
+            elif progress and task_id is not None:
+                progress.update(task_id, description=f"[red]{channel_name}: Error - {str(e)}")
         finally:
             if channel_name in self.active_recordings:
                 del self.active_recordings[channel_name]
 
-    def monitor_and_record_streamer(self, channel_name, check_interval, progress, task_id):
+    def monitor_and_record_streamer(self, channel_name, check_interval, progress=None, task_id=None):
         """Continuously monitor and record a streamer when they go live"""
-        progress.update(task_id, description=f"[cyan]{channel_name}: Checking if live...")
+        if self.run_headless:
+            self.logger.info("%s: Starting monitoring", channel_name)
+        elif progress and task_id is not None:
+            progress.update(task_id, description=f"[cyan]{channel_name}: Checking if live...")
+        
+        connection_errors = 0
+        max_connection_errors = 3
 
         while not self.stop_all_recordings.is_set():
             try:
-                if self.is_stream_live(channel_name):
-                    progress.update(task_id, description=f"[yellow]{channel_name}: Stream detected! Starting recording...")
+                is_live = self.is_stream_live(channel_name)
+                
+                # Reset error counter on successful check
+                if connection_errors > 0:
+                    if self.run_headless:
+                        self.logger.info("Connection reestablished - monitoring resumed for %s", channel_name)
+                    connection_errors = 0
+                
+                if is_live:
+                    if self.run_headless:
+                        self.logger.info("%s: Stream detected! Starting recording...", channel_name)
+                    elif progress and task_id is not None:
+                        progress.update(task_id, description=f"[yellow]{channel_name}: Stream detected! Starting recording...")
 
                     self.record_stream_concurrent(channel_name, progress, task_id)
 
                     if not self.stop_all_recordings.is_set():
-                        progress.update(task_id, description=f"[cyan]{channel_name}: Waiting 30s before next check...")
+                        if self.run_headless:
+                            self.logger.info("%s: Waiting 30 seconds before next check...", channel_name)
+                        elif progress and task_id is not None:
+                            progress.update(task_id, description=f"[cyan]{channel_name}: Waiting 30s before next check...")
                         for _ in range(30):
                             if self.stop_all_recordings.is_set():
                                 break
                             time.sleep(1)
                 else:
                     # Not live, show monitoring status
-                    progress.update(task_id, description=f"[dim]{channel_name}: Offline - checking in {check_interval}m...")
+                    if progress and task_id is not None:
+                        progress.update(task_id, description=f"[dim]{channel_name}: Offline - checking in {check_interval}m...")
 
                 if not self.stop_all_recordings.is_set():
                     wait_time = check_interval * 60
@@ -338,10 +386,19 @@ class StreamRecorder:
                         time.sleep(1)
 
             except Exception as e:
-                progress.update(task_id, description=f"[red]{channel_name}: Error - {str(e)}")
+                connection_errors += 1
+                if self.run_headless:
+                    self.logger.error("%s: Error during monitoring - %s", channel_name, str(e))
+                    if connection_errors >= max_connection_errors:
+                        self.logger.warning("%s: Multiple connection failures detected - monitoring paused, retrying in %d seconds", channel_name, 60)
+                elif progress and task_id is not None:
+                    progress.update(task_id, description=f"[red]{channel_name}: Error - {str(e)}")
                 time.sleep(60)  # Wait a minute before retrying on error
 
-        progress.update(task_id, description=f"[blue]{channel_name}: Monitoring stopped")
+        if self.run_headless:
+            self.logger.info("%s: Monitoring stopped", channel_name)
+        elif progress and task_id is not None:
+            progress.update(task_id, description=f"[blue]{channel_name}: Monitoring stopped")
 
     def monitor_multiple_streamers(self, selected_streamers, check_interval):
         """Monitor and record multiple streamers concurrently with progress bars"""
@@ -351,42 +408,69 @@ class StreamRecorder:
         original_sigint_handler = signal.signal(signal.SIGINT, self.monitoring_signal_handler)
 
         try:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TextColumn("[progress.percentage]{task.completed:.1f}MB"),
-                console=self.console
-            ) as progress:
-
-                tasks = {}
-                for streamer in selected_streamers:
-                    task_id = progress.add_task(f"[cyan]{streamer}: Initializing...", total=None)
-                    tasks[streamer] = task_id
-
+            if self.run_headless:
+                # Headless mode: simple log output
+                self.logger.info("Monitoring %d streamer(s): %s on twitch.tv", len(selected_streamers), ", ".join(selected_streamers))
+                self.logger.info("Check interval: %d minute(s)", check_interval)
+                
                 threads = []
                 for streamer in selected_streamers:
                     thread = threading.Thread(
                         target=self.monitor_and_record_streamer,
-                        args=(streamer, check_interval, progress, tasks[streamer])
+                        args=(streamer, check_interval, None, None)
                     )
                     thread.daemon = True
                     thread.start()
                     threads.append(thread)
                     self.recording_threads[streamer] = thread
 
-                # Show instructions
-                self.console.print("\n[bold yellow]Press Ctrl+C to stop all monitoring and save any active recordings[/bold yellow]")
-
                 for thread in threads:
                     thread.join()
 
                 if self.monitoring_interrupted:
-                    self.console.print("\n[bold green]All monitoring stopped. Returning to menu...[/bold green]")
+                    self.logger.info("All monitoring stopped")
                 else:
-                    self.console.print("\n[bold green]All monitoring completed[/bold green]")
+                    self.logger.info("All monitoring completed")
                 
                 self.recording_threads.clear()
+            else:
+                # Interactive mode: Rich progress bars
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TextColumn("[progress.percentage]{task.completed:.1f}MB"),
+                    console=self.console
+                ) as progress:
+
+                    tasks = {}
+                    for streamer in selected_streamers:
+                        task_id = progress.add_task(f"[cyan]{streamer}: Initializing...", total=None)
+                        tasks[streamer] = task_id
+
+                    threads = []
+                    for streamer in selected_streamers:
+                        thread = threading.Thread(
+                            target=self.monitor_and_record_streamer,
+                            args=(streamer, check_interval, progress, tasks[streamer])
+                        )
+                        thread.daemon = True
+                        thread.start()
+                        threads.append(thread)
+                        self.recording_threads[streamer] = thread
+
+                    # Show instructions
+                    self.console.print("\n[bold yellow]Press Ctrl+C to stop all monitoring and save any active recordings[/bold yellow]")
+
+                    for thread in threads:
+                        thread.join()
+
+                    if self.monitoring_interrupted:
+                        self.console.print("\n[bold green]All monitoring stopped. Returning to menu...[/bold green]")
+                    else:
+                        self.console.print("\n[bold green]All monitoring completed[/bold green]")
+                    
+                    self.recording_threads.clear()
 
         finally:
             signal.signal(signal.SIGINT, original_sigint_handler)
@@ -554,9 +638,10 @@ class StreamRecorder:
             print(f"3. Change Default Check Interval (Current: {self.default_check_interval} minutes)")
             print(f"4. Change Default Compression CRF (Current: {self.default_crf})")
             print(f"5. Change Default Compression Preset (Current: {self.default_preset})")
+            print(f"6. Toggle Headless Mode (Current: {'Enabled' if self.run_headless else 'Disabled'})")
             print("q. Back to Main Menu")
 
-            choice = input("Enter your choice (1-5, q): ").strip().lower()
+            choice = input("Enter your choice (1-6, q): ").strip().lower()
 
             if choice == '1':
                 new_dir = input(f"\nEnter new output directory (current: {self.output_directory}): ").strip()
@@ -616,6 +701,15 @@ class StreamRecorder:
                     print(f"Default preset changed to: {self.default_preset}")
                 elif new_preset:
                     print("Invalid preset. No changes made.")
+                input("Press Enter to continue...")
+            elif choice == '6':
+                self.run_headless = not self.run_headless
+                self.save_config()
+                status = "enabled" if self.run_headless else "disabled"
+                print(f"\nHeadless mode {status}.")
+                if self.run_headless:
+                    print("Note: In headless mode, the application will run without interactive menus.")
+                    print("This is useful for Docker containers or automated deployments.")
                 input("Press Enter to continue...")
             elif choice == 'q':
                 break
