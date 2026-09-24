@@ -142,3 +142,5 @@ Found a bug or have a feature request? Please help improve this project!
 [**→ Create an Issue**](https://github.com/meltyli/twitch-vod-downloader/issues)
 
 Detailed issue reports help identify and fix problems quickly, and well-described feature requests help prioritize development efforts.
+
+[Wiki](https://deepwiki.com/meltyli/Twitch-VOD-Downloader)
